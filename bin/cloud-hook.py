@@ -21,6 +21,14 @@ def transcript_tail(path):
     return (titles[-1:] if titles and titles[-1] not in tail else []) + tail
 
 
+EDGE_KEY_HEADER = "X-Handfree-Key"  # checked by the tunnel's edge (a WAF rule) before anything reaches the Mac
+
+
+def edge_key_header():
+    key = os.environ.get("HANDFREE_BRIDGE_EDGE_KEY", "")
+    return {EDGE_KEY_HEADER: key} if key else {}
+
+
 def main():
     url = os.environ.get("HANDFREE_BRIDGE_URL", "").rstrip("/")
     token = os.environ.get("HANDFREE_BRIDGE_TOKEN", "")
@@ -44,6 +52,7 @@ def main():
             "Content-Type": "application/json",
             # Bot protections in front of tunnels often block Python's default user agent.
             "User-Agent": "handfree-code-bridge",
+            **edge_key_header(),
         },
     )
     try:

@@ -89,6 +89,23 @@ out=$(curl -s -N -X POST "http://127.0.0.1:$PORT/mcp" -H "Authorization: Bearer 
 check "a long dictation keeps the stream alive" "$out" ": keep-alive"
 check "and ends with Spokenly's answer" "$out" '"id": 7'
 
+# Edge key: a recorder stands in for the tunnel's edge.
+/usr/bin/python3 -c '
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_POST(self):
+        open(sys.argv[2], "w").write(str(self.headers))
+        self.send_response(200); self.send_header("Content-Length", "0"); self.end_headers()
+HTTPServer(("127.0.0.1", int(sys.argv[1])), H).handle_request()
+' 8797 "$WORK/headers.txt" &
+RECORDER_PID=$!
+sleep 0.5
+printf '{"session_id":"c"}' | HANDFREE_BRIDGE_URL=http://127.0.0.1:8797 HANDFREE_BRIDGE_TOKEN=x HANDFREE_BRIDGE_EDGE_KEY=edge-secret python3 "$ROOT/bin/cloud-hook.py" --notify
+wait "$RECORDER_PID" 2>/dev/null
+check "the edge key reaches the tunnel's edge" "$(cat "$WORK/headers.txt" 2>/dev/null)" "X-Handfree-Key: edge-secret"
+
 kill "$BRIDGE_PID" "$FAKE_PID" 2>/dev/null; wait 2>/dev/null
 osascript -l JavaScript "$ROOT/bin/handfree.js" --off >/dev/null 2>&1
 rm -rf "$WORK"

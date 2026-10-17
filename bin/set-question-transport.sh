@@ -21,7 +21,11 @@ case "$TRANSPORT" in
   bridge)
     URL=$(setting bridge_url); TOKEN=$(setting bridge_token)
     [ -n "$URL" ] && [ -n "$TOKEN" ] || { echo "Set bridge_url and bridge_token in $CONFIG first." >&2; exit 1; }
-    claude mcp add --scope user --transport http spokenly "${URL%/}/mcp" --header "Authorization: Bearer $TOKEN"
+    # bridge_edge_key travels as X-Handfree-Key, for the tunnel's edge to check before anything reaches the Mac.
+    EDGE_KEY=$(setting bridge_edge_key)
+    set -- --header "Authorization: Bearer $TOKEN"
+    [ -n "$EDGE_KEY" ] && set -- "$@" --header "X-Handfree-Key: $EDGE_KEY"
+    claude mcp add --scope user --transport http spokenly "${URL%/}/mcp" "$@"
     ;;
 esac
 

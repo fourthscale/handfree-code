@@ -109,15 +109,18 @@ session cloud ──hooks──▶ https://ton-tunnel/hook ──▶ service du 
 
 1. **Le service du Mac** : `sh bin/install-bridge.sh` crée un jeton secret dans `~/.config/claude-speak.json` et lance le service au démarrage de session (port 8765, écoute seulement en local). Il refuse toute requête sans le jeton. `--uninstall` le retire. Il utilise `/usr/bin/python3` (outils de développement d'Apple).
 2. **Un tunnel** vers `http://localhost:8765`, à adresse fixe : Cloudflare Tunnel, ngrok, Tailscale Funnel… Avec Cloudflare, sur un domaine protégé, ajoute une règle WAF « Ignorer » et une règle de configuration (niveau de sécurité au minimum, contrôle d'intégrité du navigateur désactivé) pour ce seul nom d'hôte : la page de vérification anti-robots bloquerait la session cloud.
-3. **L'environnement cloud** (claude.ai, réglages de l'environnement) :
-   - variables : `HANDFREE_BRIDGE_URL` (l'adresse du tunnel) et `HANDFREE_BRIDGE_TOKEN` (la valeur de `bridge_token` dans `~/.config/claude-speak.json`) ;
-   - réseau : autorise le nom d'hôte du tunnel si l'environnement filtre les sorties ;
+3. **Une clé vérifiée par le tunnel** (recommandé) : chaque appel vers le pont porte l'en-tête `X-Handfree-Key`, avec la valeur de `bridge_edge_key` (`install-bridge.sh` la crée). Fais bloquer par le tunnel toute requête sans la bonne valeur : rien n'atteint alors le Mac. Avec Cloudflare, une règle WAF personnalisée, placée **avant** la règle « Ignorer » :
+   ```
+   (http.host eq "<ton-tunnel>" and not any(http.request.headers["x-handfree-key"][*] eq "<valeur>"))  →  Bloquer
+   ```
+4. **L'environnement cloud** (claude.ai, réglages de l'environnement) :
+   - variables : `HANDFREE_BRIDGE_URL` (l'adresse du tunnel), `HANDFREE_BRIDGE_TOKEN` (la valeur de `bridge_token`) et, si tu as fait l'étape 3, `HANDFREE_BRIDGE_EDGE_KEY` (la valeur de `bridge_edge_key`) ;
+   - réseau : autorise `github.com` et le nom d'hôte du tunnel si l'environnement filtre les sorties ;
    - script de démarrage :
      ```
-     claude plugin marketplace add <url-git-de-ce-dépôt>
-     claude plugin install handfree-code@handfree-code
-     claude mcp add --scope user --transport http spokenly "$HANDFREE_BRIDGE_URL/mcp" --header "Authorization: Bearer $HANDFREE_BRIDGE_TOKEN"
+     curl -fsSL https://raw.githubusercontent.com/fourthscale/handfree-code/main/bin/cloud-setup.sh | bash
      ```
+     Il installe le plugin et déclare Spokenly à l'adresse du tunnel, avec le jeton et la clé. Il n'échoue jamais : il manque une pièce, la session reste silencieuse.
 
 Les réglages de lecture sont ceux du Mac (`~/.config/claude-speak.json`) : c'est lui qui lit et qui pose les questions. Un environnement cloud peut en changer quelques-uns pour ses sessions avec la variable facultative `HANDFREE_OVERRIDES`, en JSON, par exemple `{"first_paragraph_only": false, "language": "en"}`. Seuls `language`, `voice`, `validation_word`, `first_paragraph_only`, `pause_between_lines_seconds` et `silence_around_title_ms` sont acceptés : rien qui ferait exécuter un programme au Mac.
 
@@ -171,6 +174,7 @@ Tous facultatifs, dans `~/.config/claude-speak.json` :
 | `question_transport` | `{"local": "mcp", "cloud": "bridge"}` | comment chaque type de session joint Spokenly : `mcp`, `bridge` ou `none` |
 | `bridge_url` | — | adresse publique du tunnel, pour le transport local `bridge` |
 | `bridge_token` | — | jeton du pont, créé par `install-bridge.sh` |
+| `bridge_edge_key` | — | valeur de l'en-tête `X-Handfree-Key`, vérifiée par le tunnel ; créée par `install-bridge.sh` |
 | `bridge_port` | `8765` | port local du service du pont |
 
 Le hook des questions réagit à tout outil `mcp__…spokenly…__ask_user_dictation`. Pour un autre outil de dictée, change aussi le `matcher` de `hooks/hooks.json`.

@@ -26,14 +26,16 @@ try:
     config = json.load(open(path, encoding="utf-8"))
 except (OSError, ValueError):
     config = {}
-if not config.get("bridge_token"):
-    config["bridge_token"] = secrets.token_urlsafe(32)
+created = [key for key in ("bridge_token", "bridge_edge_key") if not config.get(key)]
+for key in created:
+    config[key] = secrets.token_urlsafe(32)
+if created:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
     os.chmod(path, 0o600)
-    print("A new bridge token was written to " + path)
+    print("Written to " + path + ": " + ", ".join(created))
 else:
-    print("Keeping the bridge token already in " + path)
+    print("Keeping the bridge token and edge key already in " + path)
 EOF
 
 cat > "$PLIST" <<EOF
