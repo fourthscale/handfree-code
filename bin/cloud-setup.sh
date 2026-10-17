@@ -12,8 +12,10 @@ if [ -z "${HANDFREE_BRIDGE_URL:-}" ] || [ -z "${HANDFREE_BRIDGE_TOKEN:-}" ]; the
   exit 0
 fi
 
-HEADERS=(--header "Authorization: Bearer $HANDFREE_BRIDGE_TOKEN")
-[ -n "${HANDFREE_BRIDGE_EDGE_KEY:-}" ] && HEADERS+=(--header "X-Handfree-Key: $HANDFREE_BRIDGE_EDGE_KEY")
+# The headers name the variables, not their values: Claude Code reads them at each connection, so changing a
+# variable in the environment applies without rerunning this script (whose result an environment may reuse).
+HEADERS=(--header 'Authorization: Bearer ${HANDFREE_BRIDGE_TOKEN}')
+[ -n "${HANDFREE_BRIDGE_EDGE_KEY:-}" ] && HEADERS+=(--header 'X-Handfree-Key: ${HANDFREE_BRIDGE_EDGE_KEY}')
 
 claude mcp remove --scope user spokenly >/dev/null 2>&1 || true
 claude mcp add --scope user --transport http spokenly "${HANDFREE_BRIDGE_URL%/}/mcp" "${HEADERS[@]}" || true
