@@ -122,6 +122,40 @@ if spokenly_declared; then
   wait_quiet 1.5
 fi
 
+# Voice permissions: a fake Spokenly answers with the text in $WORK/answer.txt.
+/usr/bin/python3 -c '
+import json, sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_POST(self):
+        msg = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if msg.get("method") == "tools/call":
+            out = {"jsonrpc": "2.0", "id": msg["id"], "result": {"content": [{"type": "text", "text": "Q: x\nA: " + open(sys.argv[2]).read()}]}}
+        else:
+            out = {"jsonrpc": "2.0", "id": msg.get("id"), "result": {"tools": []}}
+        body = json.dumps(out).encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+' 8796 "$WORK/answer.txt" &
+SPOKENLY_PID=$!
+sleep 0.5
+permission() {  # $1: the spoken answer
+  printf '%s' "$1" > "$WORK/answer.txt"
+  printf '{"session_id":"a","transcript_path":"%s/a.jsonl","tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' "$WORK" | HANDFREE_SPOKENLY_URL=http://127.0.0.1:8796 hf --permission
+}
+configure ', "voice_permissions": true'
+reset; out=$(permission 'oui stop')
+check "a spoken yes allows" "$out" '"behavior":"allow"'
+check "the request is read with its session" "$(said)" "Session Project Alpha.*Permission requested: git commit"
+check "deny on a spoken no" "$(permission 'non')" '"behavior":"deny"'
+check "an unclear answer leaves the dialog" "[$(permission 'well I do not know')]" "\[\]"
+check "a mixed answer leaves the dialog" "[$(permission 'yes no')]" "\[\]"
+check "away from the Mac, the dialog shows as usual" "[$(HANDFREE_IDLE_SECONDS=3600 permission 'yes')]" "\[\]"
+configure
+check "off by default" "[$(permission 'yes')]" "\[\]"
+kill "$SPOKENLY_PID" 2>/dev/null; wait "$SPOKENLY_PID" 2>/dev/null
+
 printf '{"version": 0, "queue": [{"bogus": true}]}' > "$HANDFREE_STATE_DIR/state.json"
 reset; reply a 'After migration.'; wait_quiet 1.5
 check "a state from another version is reset" "$(said)" "After migration."

@@ -6,6 +6,7 @@
 //   --question        PreToolUse on the Spokenly tool: pauses the queue, reads the question, then waits for the dictation
 //   --notify          Notification: queues "Claude needs your answer"
 //   --session-rules   SessionStart: prints the voice rules, refreshes the stable copy the Shortcuts call
+//   --permission      PermissionRequest: reads the request, answers it from a spoken yes or no (voice_permissions)
 // Voice commands (macOS Shortcuts)
 //   --listen          "Listen": silence, bring the app forward, click its message field, start Spokenly
 //   --done            "Stop": the dictation is sent, the queue goes on
@@ -44,6 +45,9 @@ const DEFAULTS = {
   after_click_delay_seconds: 0.3,
   double_tap_gap_seconds: 0.12,
   away_after_idle_seconds: 300, // keyboard and mouse untouched this long: the user is not at the Mac (on the phone, say)
+  // Answer permission prompts by voice. Off by default: a misheard "yes" would allow the action.
+  voice_permissions: false,
+  permission_answer_seconds: 90,
   // How a session reaches Spokenly: 'mcp' (its MCP server declared in the session), 'bridge' (through the tunnel),
   // or 'none' (questions stay written). Set per context; switch the local one with bin/set-question-transport.sh.
   question_transport: { local: 'mcp', cloud: 'bridge' },
@@ -51,9 +55,9 @@ const DEFAULTS = {
 }
 
 const PHRASES = {
-  fr: { session: 'Session {title}.', question: 'Une question.', link: 'lien', code: 'Bloc de code omis.', more: 'Il y a une suite.', voice_on: 'Mode vocal activé.', voice_off: 'Mode vocal désactivé.', idle: "Claude t'attend", waiting: 'Claude attend ta réponse' },
-  en: { session: 'Session {title}.', question: 'A question.', link: 'link', code: 'Code block skipped.', more: 'There is more.', voice_on: 'Voice mode on.', voice_off: 'Voice mode off.', idle: 'Claude is waiting', waiting: 'Claude needs your answer' },
-  de: { session: 'Sitzung {title}.', question: 'Eine Frage.', link: 'Link', code: 'Codeblock ausgelassen.', more: 'Es gibt noch mehr.', voice_on: 'Sprachmodus an.', voice_off: 'Sprachmodus aus.', idle: 'Claude wartet', waiting: 'Claude wartet auf deine Antwort' },
+  fr: { session: 'Session {title}.', question: 'Une question.', link: 'lien', code: 'Bloc de code omis.', more: 'Il y a une suite.', voice_on: 'Mode vocal activé.', voice_off: 'Mode vocal désactivé.', permission: 'Autorisation demandée : {action}. Autoriser ?', idle: "Claude t'attend", waiting: 'Claude attend ta réponse' },
+  en: { session: 'Session {title}.', question: 'A question.', link: 'link', code: 'Code block skipped.', more: 'There is more.', voice_on: 'Voice mode on.', voice_off: 'Voice mode off.', permission: 'Permission requested: {action}. Allow?', idle: 'Claude is waiting', waiting: 'Claude needs your answer' },
+  de: { session: 'Sitzung {title}.', question: 'Eine Frage.', link: 'Link', code: 'Codeblock ausgelassen.', more: 'Es gibt noch mehr.', voice_on: 'Sprachmodus an.', voice_off: 'Sprachmodus aus.', permission: 'Erlaubnis angefragt: {action}. Erlauben?', idle: 'Claude wartet', waiting: 'Claude wartet auf deine Antwort' },
 }
 
 const SESSION_RULES = {
@@ -413,6 +417,59 @@ function userIsAway() {
   return idleSeconds() >= CONFIG.away_after_idle_seconds
 }
 
+// Clear words only: anything else leaves the usual dialog on screen.
+const YES_WORDS = ['oui', 'ouais', 'autorise', 'autoriser', 'vas-y', 'valide', "d'accord", 'yes', 'allow', 'approve', 'go ahead', 'ja', 'erlauben']
+const NO_WORDS = ['non', 'refuse', 'refuser', 'no', 'deny', 'nein', 'ablehnen']
+const MAX_SPOKEN_ACTION_CHARS = 160
+
+function describeAction(toolName, toolInput) {
+  const input = toolInput || {}
+  if (toolName === 'Bash' && input.command) return input.command.slice(0, MAX_SPOKEN_ACTION_CHARS)
+  const file = input.file_path || input.notebook_path || input.path
+  if (file) return `${toolName} ${file.split('/').pop()}`
+  return toolName.replace(/^mcp__/, '').replace(/__/g, ' ')
+}
+
+function answerOf(spokenlyReply) {
+  const text = (((spokenlyReply || {}).result || {}).content || []).map((c) => c.text || '').join('\n')
+  const answer = (text.match(/A:\s*([\s\S]*)$/) || [null, text])[1].toLowerCase()
+  return answer.split(/[^a-zà-ÿ'-]+/).filter((word) => word && word !== CONFIG.validation_word.toLowerCase())
+}
+
+function decide(words) {
+  const said = (list) => list.some((w) => (w.includes(' ') ? words.join(' ').includes(w) : words.includes(w)))
+  if (said(YES_WORDS) && !said(NO_WORDS)) return 'allow'
+  if (said(NO_WORDS) && !said(YES_WORDS)) return 'deny'
+  return null
+}
+
+function askSpokenly(question) {
+  const url = ENV.HANDFREE_SPOKENLY_URL || 'http://localhost:51089'
+  const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'ask_user_dictation', arguments: { questions: [question] } } }
+  const output = shell(`curl -s -m ${Math.round(CONFIG.permission_answer_seconds)} -X POST ${quote(url)} -H 'Content-Type: application/json' -d ${quote(JSON.stringify(call))}`)
+  try {
+    return JSON.parse(output)
+  } catch (e) {
+    return null
+  }
+}
+
+// PermissionRequest: read the request, take the answer by voice. No clear answer: the dialog shows as usual.
+function answerPermission() {
+  const data = readStdin()
+  if (!CONFIG.voice_permissions || CONTEXT !== 'local' || userIsAway() || !spokenlyResponds()) return ''
+  const entries = readTranscript(data.transcript_path)
+  const question = PHRASE.permission.replace('{action}', describeAction(data.tool_name || '', data.tool_input))
+  withState(killReader)
+  say(`${announcement(sessionTitle(entries, data.cwd))}${question}`)
+  startDictating()
+  const decision = decide(answerOf(askSpokenly(question)))
+  doneDictating()
+  if (!decision) return ''
+  const verdict = decision === 'allow' ? { behavior: 'allow' } : { behavior: 'deny', message: 'Refused by voice.' }
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: verdict } })
+}
+
 function readQuestion() {
   if (userIsAway()) {
     const reason = (AWAY[LANGUAGE] || AWAY.en).replace('{minutes}', Math.round(idleSeconds() / 60))
@@ -634,6 +691,7 @@ const COMMANDS = {
   '': queueNewReply,
   '--question': readQuestion,
   '--notify': queueWaitingNotice,
+  '--permission': answerPermission,
   '--session-rules': printSessionRules,
   '--listen': listen,
   '--done': doneDictating,
@@ -647,7 +705,7 @@ const COMMANDS = {
   '--read': readQueue,
   '--learn-prompt-path': learnPromptPath,
 }
-const SILENT_WHEN_OFF = ['', '--question', '--notify', '--session-rules', '--listen']
+const SILENT_WHEN_OFF = ['', '--question', '--notify', '--session-rules', '--listen', '--permission']
 
 function run(argv) {
   const command = argv[0] || ''

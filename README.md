@@ -96,6 +96,7 @@ The `DictationIM.app` path may differ on other macOS versions. If a voice comman
 - A session started by another one does not read its reply: the one that started it relays it. If you talk to it yourself, it answers aloud.
 - **Away from the Mac** (on your phone, say): when keyboard and mouse have been idle for `away_after_idle_seconds`, the plugin refuses the Spokenly call, which would wait on a Mac you are not at, and the session asks in writing.
 - **Cloud sessions**: without the bridge, nothing is read and their questions stay written (dictating to them works: the field is on your Mac). With the bridge, everything works as locally: see *Cloud sessions: the bridge*.
+- **Permission prompts by voice** (opt-in, `voice_permissions`): the request is read ("Permission requested: git commit. Allow?"), Spokenly listens, a clear "yes" allows and a clear "no" denies. Anything else, or when you are away, leaves the usual dialog on screen. Deny rules you configured still win. Keep it off if a misheard "yes" is a risk you do not want.
 - **Voice mode**, or `/vocal [on|off]` in Claude: turns everything off or back on. Off, the queue is emptied and new sessions get no voice rules.
 
 ## Cloud sessions: the bridge (optional)
@@ -171,6 +172,8 @@ All optional, in `~/.config/claude-speak.json`:
 | `after_click_delay_seconds` | `0.3` | wait after the click |
 | `double_tap_gap_seconds` | `0.12` | gap between the two taps |
 | `away_after_idle_seconds` | `300` | past this much Mac idle time, questions go in writing |
+| `voice_permissions` | `false` | answer permission prompts by voice |
+| `permission_answer_seconds` | `90` | how long to wait for the spoken answer |
 | `question_transport` | `{"local": "mcp", "cloud": "bridge"}` | how each kind of session reaches Spokenly: `mcp`, `bridge` or `none` |
 | `bridge_url` | — | the tunnel's public address, for the local `bridge` transport |
 | `bridge_token` | — | the bridge's token, created by `install-bridge.sh` |
