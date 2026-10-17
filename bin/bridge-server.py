@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 CONFIG_PATH = os.environ.get("HANDFREE_CONFIG") or os.path.expanduser("~/.config/claude-speak.json")
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "handfree.js")
 SPOKENLY_URL = os.environ.get("HANDFREE_SPOKENLY_URL", "http://localhost:51089")
-HOOK_COMMANDS = {"", "--question", "--notify", "--session-rules"}
+HOOK_COMMANDS = {"", "--question", "--answered", "--notify", "--session-rules"}
 HOOK_TIMEOUT_SECONDS = 110
 SPOKENLY_TIMEOUT_SECONDS = 900
 # Cloudflare drops a request whose origin stays silent for 100 s; a dictation can last longer.

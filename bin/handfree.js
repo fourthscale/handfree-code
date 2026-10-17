@@ -7,11 +7,12 @@
 //   --notify          Notification: queues "Claude needs your answer"
 //   --session-rules   SessionStart: prints the voice rules, refreshes the stable copy the Shortcuts call
 //   --permission      PermissionRequest: reads the request, answers it from a spoken yes or no (voice_permissions)
+//   --answered        PostToolUse on the Spokenly tool: the answer is in, however it was sent; the queue goes on
 // Voice commands (macOS Shortcuts)
-//   --listen          "Listen": silence, bring the app forward, click its message field, start Spokenly
+//   --listen          "Claude Listen": silence, bring the app forward, click its message field, start Spokenly
 //   --done            "Stop": the dictation is sent, the queue goes on
-//   --stop / --resume / --restart   "Quiet" / "Continue" / "Restart"
-//   --on / --off / --toggle         voice mode
+//   --stop / --resume / --restart   "Claude Quiet" / "Claude Continue" / "Claude Restart"
+//   --on / --off      "Claude Voice mode on" / "Claude Voice mode off" (--toggle: /vocal with no argument)
 // Internal: --read (the reader process), --learn-prompt-path (background search of the message field)
 
 ObjC.import('Foundation')
@@ -31,6 +32,7 @@ const DEFAULTS = {
   language: null, // null: the Mac's first language
   voice: null, // null: the system voice and rate (Accessibility > Spoken Content)
   say_path: '/usr/bin/say',
+  speak_command: null, // another voice: a shell script given the text as its argument, done when it has spoken (speak-openai.sh)
   pause_between_lines_seconds: 1.2, // Voice Control only matches a command spoken alone
   silence_around_title_ms: 800,
   announce_session: 'on_change', // or 'always': before every reply, question and resumed reading
@@ -124,11 +126,6 @@ function now() {
   return Date.now() / 1000
 }
 
-function runTask(path, args) {
-  const task = $.NSTask.launchedTaskWithLaunchPathArguments(path, args)
-  task.waitUntilExit
-}
-
 function readStdin() {
   const data = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile
   const text = ObjC.unwrap($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding))
@@ -165,55 +162,85 @@ function macLanguage() {
 
 function say(text) {
   pauseMediaIfPlaying()
-  runTask(CONFIG.say_path, CONFIG.voice ? ['-v', CONFIG.voice, text] : [text])
+  // A program that cannot be started or fails (no network, a wrong key) must never silence the voice: say takes over.
+  if (!CONFIG.speak_command || !speakWith('/bin/sh', [CONFIG.speak_command.replace(/^~(?=\/)/, HOME), text.replace(/\[\[slnc \d+\]\]/g, ' ').replace(/\s+/g, ' ').trim()])) {
+    speakWith(CONFIG.say_path, CONFIG.voice ? ['-v', CONFIG.voice, text] : [text])
+  }
   withState((state) => {
     state.last_speech_end = now()
   })
+}
+
+const TASK_KILLED = 2 // NSTaskTerminationReasonUncaughtSignal
+
+// The speaking process is recorded so that "Quiet" can stop it, whatever program it is.
+function speakWith(path, args) {
+  let task
+  try {
+    task = $.NSTask.launchedTaskWithLaunchPathArguments(path, args)
+  } catch (e) {
+    return false
+  }
+  withState((state) => {
+    state.speaker_pid = task.processIdentifier
+  })
+  task.waitUntilExit
+  withState((state) => {
+    state.speaker_pid = null
+  })
+  // Stopped by "Quiet" is not a failure: say must not take the line over.
+  return task.terminationStatus === 0 || task.terminationReason === TASK_KILLED
 }
 
 // ---------- pausing what plays while speaking
 
 // macOS keeps reporting audio about ten seconds after it stops: within that window, the sound may be our own voice.
 const AUDIO_SIGNAL_LINGER_SECONDS = 12
-const NX_KEYTYPE_PLAY = 16
+// MediaRemote commands sent to the Now Playing app, the one the keyboard's play/pause key drives.
+// A synthetic media key does not work from osascript: the event it builds reaches nobody.
+const MEDIA_COMMAND = { play: 0, pause: 1 }
+const MEDIA_COMMAND_SEND_SECONDS = 0.5 // the command leaves asynchronously: the process must outlive it
 
+// coreaudiod holds an assertion per device in use, naming the process it serves; inputs are marked audio-in.
+// Older macOS mark outputs audio-out, macOS 14 only names the device: anything not audio-in is an output.
 function audioIsPlaying() {
   if (ENV.HANDFREE_AUDIO_PLAYING) return ENV.HANDFREE_AUDIO_PLAYING === '1'
-  return shell('pmset -g assertions').includes('audio-out')
+  const pids = [...shell('pmset -g assertions').matchAll(/Created for PID: (\d+)\.?\s*[\r\n]\s*Resources: (?!audio-in)/g)].map((m) => m[1])
+  if (!pids.length) return false
+  // Our own voice is not music; an assertion outliving its process is a sound that ended.
+  return shell(`ps -o comm= -p ${pids.join(',')}; true`).split(/[\r\n]+/).some((command) => command.trim() && !/(^|\/)say$/.test(command.trim()))
 }
 
-// The play/pause key toggles the Now Playing app: pressed only when something plays, never on a doubt.
+// Paused only when something plays, never on a doubt: resuming afterwards must not start what the user had stopped.
 function pauseMediaIfPlaying() {
   if (!CONFIG.pause_media) return
   withState((state) => {
     if (state.media_paused || now() - state.last_speech_end < AUDIO_SIGNAL_LINGER_SECONDS || !audioIsPlaying()) return
-    pressPlayPause()
+    sendMediaCommand('pause')
     state.media_paused = true
   })
 }
 
 function resumeMediaIfPaused(state) {
   if (!state.media_paused) return
-  pressPlayPause()
+  sendMediaCommand('play')
   state.media_paused = false
 }
 
-function pressPlayPause() {
-  if (ENV.HANDFREE_MEDIA_KEY_LOG) return writeFile(ENV.HANDFREE_MEDIA_KEY_LOG, (readFile(ENV.HANDFREE_MEDIA_KEY_LOG) || '') + 'play-pause\n')
+function sendMediaCommand(name) {
+  if (ENV.HANDFREE_MEDIA_KEY_LOG) return writeFile(ENV.HANDFREE_MEDIA_KEY_LOG, (readFile(ENV.HANDFREE_MEDIA_KEY_LOG) || '') + name + '\n')
   try {
-    for (const down of [true, false]) {
-      const flags = down ? 0xa00 : 0xb00
-      const data1 = (NX_KEYTYPE_PLAY << 16) | ((down ? 0xa : 0xb) << 8)
-      const event = $.NSEvent.otherEventWithTypeLocationModifierFlagsTimestampWindowNumberContextSubtypeData1Data2(14, $.NSMakePoint(0, 0), flags, 0, 0, null, 8, data1, -1)
-      $.CGEventPost(0, event.CGEvent)
-    }
-  } catch (e) {} // a key that cannot be pressed must never silence the voice
+    $.NSBundle.bundleWithPath('/System/Library/PrivateFrameworks/MediaRemote.framework').load
+    ObjC.bindFunction('MRMediaRemoteSendCommand', ['bool', ['int', 'id']])
+    $.MRMediaRemoteSendCommand(MEDIA_COMMAND[name], $())
+    $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(MEDIA_COMMAND_SEND_SECONDS))
+  } catch (e) {} // a command that cannot be sent must never silence the voice
 }
 
 // ---------- state, shared by every process, behind a lock
 
 function emptyState() {
-  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, voice_off: false, prompt_path: null, learning_since: null, media_paused: false, last_speech_end: 0 }
+  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, voice_off: false, prompt_path: null, learning_since: null, media_paused: false, last_speech_end: 0, speaker_pid: null }
 }
 
 function withState(change) {
@@ -348,7 +375,10 @@ function startReaderUnlessRunning(state) {
 function killReader(state) {
   if (isAlive(state.reader_pid)) shell(`kill ${state.reader_pid}`)
   shell('killall say')
+  // A speak_command plays through a child of its own (afplay…): both go.
+  if (state.speaker_pid) shell(`pkill -P ${state.speaker_pid}; kill ${state.speaker_pid}`)
   state.reader_pid = null
+  state.speaker_pid = null
 }
 
 // The session's name is said when the speaker changes; 'always' also says it at every reply and resumed reading.
@@ -588,7 +618,7 @@ function questionToolIsDeclared() {
 function refreshStableCopy() {
   const sourceDir = scriptPath().replace(/\/[^/]*$/, '')
   const stableDir = STABLE_COPY.replace(/\/[^/]*$/, '')
-  for (const name of ['handfree.js', 'bridge-server.py']) {
+  for (const name of ['handfree.js', 'bridge-server.py', 'speak-openai.sh']) {
     const source = readFile(`${sourceDir}/${name}`)
     if (source && source !== readFile(`${stableDir}/${name}`)) writeFile(`${stableDir}/${name}`, source)
   }
@@ -776,6 +806,7 @@ const COMMANDS = {
   '--session-rules': printSessionRules,
   '--listen': listen,
   '--done': doneDictating,
+  '--answered': doneDictating,
   '--dictating': startDictating,
   '--stop': stop,
   '--resume': resume,

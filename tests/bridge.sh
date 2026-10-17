@@ -58,7 +58,9 @@ check_not "only its first paragraph" "$(said)" "More."
 : > "$HANDFREE_SAY_LOG"
 printf '{"session_id":"c","transcript_path":"%s/cloud.jsonl","tool_input":{"questions":["Publish?"]}}' "$WORK" | cloud --question >/dev/null
 check "a cloud question is read on the Mac" "$(said)" "A question.*Publish"
-osascript -l JavaScript "$ROOT/bin/handfree.js" --done >/dev/null
+printf '{"session_id":"c"}' | cloud --answered >/dev/null
+printf '{"session_id":"c","transcript_path":"%s/cloud.jsonl","last_assistant_message":"Answered."}' "$WORK" | cloud >/dev/null; sleep 1.5
+check "a cloud answer frees the queue through the bridge" "$(said)" "Answered."
 
 out=$(printf '{"session_id":"c","transcript_path":"%s/cloud.jsonl","last_assistant_message":"Shall I push?"}' "$WORK" | cloud)
 if grep -q '"spokenly"' "$HOME/.claude.json" 2>/dev/null; then

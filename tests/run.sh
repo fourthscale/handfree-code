@@ -69,6 +69,16 @@ reply a 'After the question.'; sleep 1
 check_not "the queue waits for the answer" "$(said)" "After the question"
 hf --done >/dev/null; wait_quiet 1.5
 
+reset; printf '{"session_id":"a","transcript_path":"%s/a.jsonl","tool_input":{"questions":["First?"]}}' "$WORK" | hf --question >/dev/null
+printf '{"session_id":"a","tool_name":"mcp__spokenly__ask_user_dictation"}' | hf --answered >/dev/null
+reply a 'Answer to the first.'; wait_quiet 1.5
+check "an answer sent from Spokenly, without Stop, frees the queue" "$(said)" "Answer to the first"
+reset; printf '{"session_id":"b","transcript_path":"%s/b.jsonl","tool_input":{"questions":["Second?"]}}' "$WORK" | hf --question >/dev/null
+printf '{"session_id":"b"}' | hf --answered >/dev/null
+reply b 'Answer to the second.'; wait_quiet 1.5
+check_not "the next session's reply is read alone" "$(said)" "Answer to the first"
+check "and read at once" "$(said)" "Answer to the second"
+
 reset; printf '{"type":"user","turnOrigin":"sdk","message":{"content":"Background (from the session that started this one): x"}}\n' >> "$WORK/b.jsonl"
 reply b 'Delegated task.'; sleep 1
 check_not "a turn delegated by another session is not read" "$(said)" "Delegated task"
@@ -184,27 +194,39 @@ check "a question from another session says its name" "$(said)" "Session Project
 hf --done >/dev/null; wait_quiet 1
 configure
 
-# Pausing what plays: the play/pause key is recorded instead of pressed.
+# Pausing what plays: the media commands are recorded instead of sent.
 export HANDFREE_MEDIA_KEY_LOG="$WORK/keys.log"
 rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
 HANDFREE_AUDIO_PLAYING=1 reply a 'Over the music.'; wait_quiet 2
-check "music playing: paused before speaking, resumed after" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^play-pause play-pause $"
+check "music playing: paused before speaking, resumed after" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^pause play $"
 rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
 HANDFREE_AUDIO_PLAYING=0 reply a 'In silence.'; wait_quiet 2
-check "nothing playing: the key is never pressed" "[$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null)]" "\[\]"
+check "nothing playing: nothing is sent" "[$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null)]" "\[\]"
 reply a 'Right after.'; wait_quiet 2
 HANDFREE_AUDIO_PLAYING=1 reply a 'Own voice still reported.'; wait_quiet 2
 check "our own voice is not taken for music" "[$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null)]" "\[\]"
 rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
 printf '{"session_id":"b","transcript_path":"%s/b.jsonl","tool_input":{"questions":["Over the music?"]}}' "$WORK" | HANDFREE_AUDIO_PLAYING=1 hf --question >/dev/null
-check "a question pauses the music too" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^play-pause $"
+check "a question pauses the music too" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^pause $"
 hf --done >/dev/null; wait_quiet 1.5
-check "and the answer given, the music resumes" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^play-pause play-pause $"
+check "and the answer given, the music resumes" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^pause play $"
 unset HANDFREE_MEDIA_KEY_LOG
 
 printf '{"version": 0, "queue": [{"bogus": true}]}' > "$HANDFREE_STATE_DIR/state.json"
 reset; reply a 'After migration.'; wait_quiet 1.5
 check "a state from another version is reset" "$(said)" "After migration."
+
+# Another voice: a script given the text speaks instead of say.
+printf 'sleep "${SPEAKER_SECONDS:-0.1}"; printf "other voice: %%s\\n" "$1" >> "%s"; exit "${SPEAKER_EXIT:-0}"\n' "$HANDFREE_SAY_LOG" > "$WORK/speaker.sh"
+printf '{"say_path": "%s", "speak_command": "%s", "language": "en", "pause_between_lines_seconds": 0.1, "silence_around_title_ms": 1}\n' "$ROOT/tests/fake-say.sh" "$WORK/speaker.sh" > "$HANDFREE_CONFIG"
+rm -f "$HANDFREE_STATE_DIR/state.json"; reset; reply a 'Other voice.'; wait_quiet 1.5
+check "speak_command speaks instead of say" "$(said)" "^other voice: Session Project Alpha. Other voice."
+check_not "without say's silence marks" "$(said)" "slnc"
+reset; SPEAKER_EXIT=1 reply a 'Failing voice.'; wait_quiet 2
+check "a failing speak_command hands the line to say" "$(said)" "^Failing voice."
+reset; SPEAKER_SECONDS=3 reply a 'Cut short.'; sleep 0.8; hf --stop >/dev/null; sleep 3
+check_not "Quiet stops the other voice too" "$(said)" "Cut short"
+configure
 
 hf --off >/dev/null 2>&1
 rm -rf "$WORK"

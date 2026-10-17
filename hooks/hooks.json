@@ -23,6 +23,28 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__.*spokenly.*__ask_user_dictation",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hook.sh\" --answered"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "mcp__.*spokenly.*__ask_user_dictation",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hook.sh\" --answered"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
