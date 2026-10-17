@@ -2,153 +2,274 @@
 
 Drive Claude Code by voice on macOS, hands free.
 
-- **Claude talks to you**: replies and questions are read aloud, with the name of the session speaking. Only the first paragraph is read by default; the rest waits until you say "Continue".
-- **You talk to Claude**: you dictate with [Spokenly](https://spokenly.app) and send by saying "stop". Claude's questions go through Spokenly, and you answer them aloud.
-- **You steer the reading** with a few words: Listen, Stop, Quiet, Continue, Restart, Voice mode.
+- **Claude talks**: replies and questions are read aloud, with the name of the session speaking. Only the first paragraph is read; say "Claude Continue" for the rest.
+- **You talk**: you dictate with [Spokenly](https://spokenly.app) and send by saying "stop". Claude asks its questions through Spokenly and you answer aloud.
+- **You steer it** with a few spoken commands: "Claude Listen", "Stop", "Claude Quiet", "Claude Continue", "Claude Restart", "Claude Voice mode on/off".
 
-The plugin sets up the whole Claude Code side. The macOS side (Shortcuts, Voice Control commands, permissions) is done by hand, once: macOS does not let a program grant itself these rights.
+The plugin sets up Claude Code. The macOS side (Shortcuts, Voice Control, permissions) is done by hand, once: macOS does not let a program grant itself these rights.
 
-Tested on macOS 14.4.1 with the Claude desktop app. The plugin itself only relies on what macOS ships (`osascript`, `say`); the optional cloud bridge also needs `/usr/bin/python3`.
+Tested on macOS 14.4.1 with the Claude desktop app. It only relies on what macOS ships (`osascript`, `say`); the optional cloud bridge also needs `/usr/bin/python3`.
 
 ## Requirements
 
-- macOS and the Claude desktop app (Claude Code in a terminal works too, see *Settings*).
-- [Spokenly](https://spokenly.app) (the free tier is enough), with its MCP server declared in Claude Code as `spokenly` (Spokenly offers this in its settings).
+- macOS, the Claude desktop app and the `claude` command line (Claude Code in a terminal works too: see `target_app` in *Settings*).
+- [Spokenly](https://spokenly.app); the free tier is enough.
 - Two microphones: your headphones' for Spokenly, the Mac's for Voice Control. With a single microphone they fight over it.
-- Headphones, preferably: without them the Mac's microphone hears the reading voice, and a command word read aloud by Claude can trigger on its own.
+- Headphones, preferably: otherwise the Mac's microphone hears the reading voice, and a command word read by Claude can trigger on its own.
 
-**Privacy.** Depending on the transcription model chosen in Spokenly, your voice may be sent to an online service. Check the model in its settings. The plugin itself contacts no service: everything happens on the Mac (see *Cloud sessions* for the optional bridge).
+**Privacy.** Depending on the model chosen in Spokenly, your voice may go to an online service. The plugin itself sends nothing anywhere, except to an online voice you choose (`speak_command`) and through the cloud bridge, if you set them up.
 
 ## Installation
 
 ### 1. The plugin
 
+```bash
+claude plugin marketplace add https://github.com/fourthscale/handfree-code.git
+claude plugin install handfree-code@handfree-code
 ```
-/plugin marketplace add https://github.com/fourthscale/handfree-code.git
-/plugin install handfree-code@handfree-code
-```
 
-Then open a new session: on start, the plugin drops a copy of its scripts in `~/Library/Application Support/handfree-code/`. That path, stable across versions, is what the Shortcuts call.
+(Or, inside Claude: `/plugin marketplace add …` then `/plugin install handfree-code@handfree-code`.)
 
-### 2. The voice
+Then open a new session: it copies the plugin's scripts to `~/Library/Application Support/handfree-code/`, a path that stays the same across versions. The Shortcuts call the scripts there.
 
-System Settings > Accessibility > Spoken Content > **System voice**: pick a voice in your language and its rate. The plugin uses that voice unless you set one in *Settings*.
-
-### 3. Spokenly
+### 2. Spokenly
 
 - Microphone: your headphones'.
-- Dictation shortcut: **double tap on right Command**, in toggle mode (one tap starts, one tap stops). If you choose another one, set `spokenly_trigger` to `none` and start Spokenly yourself.
-- Leave Spokenly's own "read the question aloud" option off: the plugin does it, and both would overlap.
-- Shorten Claude Code's wait on Spokenly: an unanswered question otherwise blocks the session for 30 minutes. Add `"timeout": 120000` (2 minutes) to the `spokenly` entry of `mcpServers` in `~/.claude.json`.
+- Dictation shortcut: **double tap on right Command**, in toggle mode. With another shortcut, set `spokenly_trigger` to `none`.
+- Turn off Spokenly's own "read the question aloud": the plugin already reads it.
+- Declare its MCP server in Claude Code:
+  ```bash
+  claude mcp add --scope user spokenly "$HOME/Library/Application Support/Spokenly/mcp-bridge.sh"
+  ```
+- Then, in `~/.claude.json`, add `"timeout": 120000` to the `spokenly` entry under `mcpServers`. Without it, an unanswered question blocks the session for 30 minutes.
 
-### 4. Shortcuts (Shortcuts app)
+### 3. The voice
 
-Create one shortcut per file of the [`shortcuts/`](shortcuts) folder, pasting its content into the action named at the top of the file:
+System Settings > Accessibility > Spoken Content > **System voice**: pick a voice in your language and its rate.
+
+**An online voice** (optional): `speak_command` points to a script that speaks the text it is given. One for OpenAI ships with the plugin. Add this to `~/.config/claude-speak.json`:
+
+```json
+{
+  "speak_command": "~/Library/Application Support/handfree-code/speak-openai.sh",
+  "openai_api_key": "<YOUR-OPENAI-KEY>"
+}
+```
+
+Optional: `openai_voice` (default `alloy`), `openai_tts_model` (default `gpt-4o-mini-tts`). Each line costs a round trip, about half a second to a second. If the script fails, `say` reads the line. For another service, copy the script and change the request.
+
+### 4. Shortcuts
+
+In the Shortcuts app, create one shortcut per file of [`shortcuts/`](shortcuts) and paste the file's content into the action named on its first line:
 
 | Shortcut | Action | File |
 |---|---|---|
-| Listen | Run Shell Script | `listen.sh` |
-| Press Return | Run AppleScript | `press-return.applescript` |
-| Quiet | Run Shell Script | `quiet.sh` |
-| Continue | Run Shell Script | `continue.sh` |
-| Restart | Run Shell Script | `restart.sh` |
-| Voice mode | Run Shell Script | `voice-mode.sh` |
+| Claude Listen | Run Shell Script | `listen.sh` |
+| Stop | Run AppleScript | `stop.applescript` |
+| Claude Quiet | Run Shell Script | `quiet.sh` |
+| Claude Continue | Run Shell Script | `continue.sh` |
+| Claude Restart | Run Shell Script | `restart.sh` |
+| Claude Voice mode on | Run Shell Script | `voice-on.sh` |
+| Claude Voice mode off | Run Shell Script | `voice-off.sh` |
 
-Run each one once from the Shortcuts app: macOS then asks for permissions; accept them.
+Run each one once from the Shortcuts app and accept the permissions macOS asks for.
 
-### 5. Voice commands (Voice Control)
+### 5. Voice commands
 
 System Settings > Accessibility > Voice Control: turn it on, with the **Mac's** microphone. Then Commands… > "+", for each command: "While using: Any Application", "Perform: Run Shortcut".
 
-| You say | Shortcut |
-|---|---|
-| Listen | Listen |
-| Stop | Press Return |
-| Quiet | Quiet |
-| Continue | Continue |
-| Restart | Restart |
-| Voice mode | Voice mode |
+| You say | Shortcut | What it does |
+|---|---|---|
+| Claude Listen | Claude Listen | brings Claude forward, clicks its field, starts Spokenly |
+| Stop | Stop | sends the dictation (presses Return) |
+| Claude Quiet | Claude Quiet | cuts the reading |
+| Claude Continue | Claude Continue | reads the rest of the reply |
+| Claude Restart | Claude Restart | reads the reply again from the start |
+| Claude Voice mode on | Claude Voice mode on | turns voice mode on |
+| Claude Voice mode off | Claude Voice mode off | turns it off: nothing is read, questions stay written |
 
-The words are yours to choose, in any language; keep the "Stop" word identical to the `validation_word` setting.
+"Claude" in front keeps a word said in conversation from triggering a command. "Stop" stays short: you say it at the end of every dictation. Pick your own words, in any language; keep "Stop" the same as the `validation_word` setting.
 
-Then switch Voice Control to **command mode** (search "mode" in the command list for the phrase in your language): otherwise it types everything it hears into Claude's field, the reading voice included.
+Switch Voice Control to **command mode** (search "mode" in the command list): otherwise it types everything it hears into Claude's field, the reading voice included.
 
-To switch sessions by voice, add commands limited to Claude with "Press Keyboard Shortcut": new session ⌘N, next session ⌘⇧], previous ⌘⇧[, search ⌘⇧K (from Claude's menus; keys differ on non-US keyboards).
+To switch sessions by voice, add commands limited to Claude, with "Press Keyboard Shortcut": new session ⌘N, next ⌘⇧], previous ⌘⇧[, search ⌘⇧K.
 
-### 6. Permissions (Privacy & Security)
+### 6. Permissions
 
-In **Accessibility**, enable, adding them with "+" when needed (⌘⇧G to paste a path):
+System Settings > Privacy & Security > **Accessibility**: enable these, adding them with "+" when missing (⌘⇧G to paste a path):
 
-- Shortcuts (in Applications);
+- Shortcuts;
 - `/System/Library/CoreServices/Shortcuts Events.app`;
-- `/System/Library/Input Methods/DictationIM.app`: the dictation module macOS holds responsible for keys sent by a voice command. Without it, a command works once and then fails at random.
+- `/System/Library/Input Methods/DictationIM.app`: macOS holds it responsible for the keys a voice command sends. Without it, commands fail at random.
 
-Also accept, when they show up, permission to **control System Events** and **microphone** access for Spokenly and Voice Control.
+Accept, when asked, control of **System Events** and **microphone** access for Spokenly and Voice Control.
 
-The `DictationIM.app` path may differ on other macOS versions. If a voice command fails, *Troubleshooting* shows how to find the refused program.
+### 7. Check
+
+```bash
+say hello
+```
+
+Then, in a new Claude session: "ask me a question". The question is read, you answer in Spokenly, and the reply that follows is read.
 
 ## Usage
 
-- **Listen** → dictate → **Stop**: the message goes to the session on screen. "Listen" brings Claude forward and puts the cursor in its field, wherever you are.
-- A question from Claude: it is read ("Session X. A question. …"), you answer, **Stop** sends. The answer always goes back to the session that asked.
-- At the end of a reply: the first paragraph is read, followed by "There is more" when text remains. **Continue** reads the rest, **Restart** reads it all again, **Quiet** cuts it (say it in a pause between two lines).
-- **Music or a video playing**: it is paused before Claude speaks and resumed once the queue is done and your answer given. Only the Now Playing app (the one the keyboard's play/pause key drives) is paused. To never mistake its own voice for music, the plugin only pauses when its voice has been silent for 12 seconds; when in doubt, it touches nothing.
-- Several sessions: readings wait their turn. A session's name is said when the speaker changes, not each time the same session talks again. Nothing is read while you dictate.
-- A session started by another one does not read its reply: the one that started it relays it. If you talk to it yourself, it answers aloud.
-- **Away from the Mac** (on your phone, say): when keyboard and mouse have been idle for `away_after_idle_seconds`, the plugin refuses the Spokenly call, which would wait on a Mac you are not at, and the session asks in writing.
-- **Cloud sessions**: without the bridge, nothing is read and their questions stay written (dictating to them works: the field is on your Mac). With the bridge, everything works as locally: see *Cloud sessions: the bridge*.
-- **Permission prompts by voice** (opt-in, `voice_permissions`): the request is read ("Permission requested: git commit. Allow?"), Spokenly listens, a clear "yes" allows and a clear "no" denies. Anything else, or when you are away, leaves the usual dialog on screen. Deny rules you configured still win. Keep it off if a misheard "yes" is a risk you do not want.
-- **Voice mode**, or `/vocal [on|off]` in Claude: turns everything off or back on. Off, the queue is emptied and new sessions get no voice rules.
+- **Claude Listen** → dictate → **Stop**: the message goes to the session on screen, wherever you were.
+- **A question**: it is read ("Session X. A question. …"), you answer, **Stop** or Enter sends. The answer goes back to the session that asked.
+- **A reply**: the first paragraph is read, then "There is more" if text remains. **Claude Continue** reads the rest, **Claude Restart** reads it all again, **Claude Quiet** cuts it (say it between two lines).
+- **Several sessions**: readings wait their turn. A session's name is said when the speaker changes. Nothing is read while you dictate.
+- **Music or a video**: paused while Claude speaks, resumed afterwards. Only the app the keyboard's play/pause key drives; if nothing plays, nothing is touched.
+- **A session started by another one** stays quiet: the one that started it relays its result. Talk to it yourself and it answers aloud.
+- **Away from the Mac** (keyboard and mouse idle for `away_after_idle_seconds`): questions are asked in writing instead.
+- **Permission prompts by voice** (opt-in, `voice_permissions`): the request is read, a clear "yes" allows, a clear "no" denies, anything else leaves the dialog on screen. Your deny rules still win. Keep it off if a misheard "yes" is a risk.
+- **Claude Voice mode off / on**, or `/vocal off|on` in Claude: turns everything off or back on.
+
+## Updating
+
+```bash
+claude plugin marketplace update handfree-code
+claude plugin update handfree-code@handfree-code
+```
+
+Then open a new session: hooks are only reloaded by a new session. With the bridge, restart its service so it runs the new version:
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/com.handfree-code.bridge"
+```
 
 ## Cloud sessions: the bridge (optional)
 
-A cloud session runs on a Linux machine: without the bridge it stays silent and its questions stay written. With the bridge, its hooks and its Spokenly questions travel through a tunnel to your Mac, and everything works as locally, as long as you are in the room.
+A cloud session runs on a Linux machine, far from your Mac's speakers and microphone. The bridge sends its hooks and its questions to your Mac through a tunnel, so it talks and listens like a local one.
 
 ```
-cloud session ──hooks──▶ https://your-tunnel/hook ──▶ Mac service ──▶ reading, queue
-              ──MCP────▶ https://your-tunnel/mcp  ──▶ Mac service ──▶ Spokenly (localhost:51089)
+cloud session ──hooks──▶ https://<HOSTNAME>/hook ──▶ bridge on the Mac ──▶ reading
+              ──MCP────▶ https://<HOSTNAME>/mcp  ──▶ bridge on the Mac ──▶ Spokenly
 ```
 
-1. **The Mac service**: `sh bin/install-bridge.sh` writes a secret token and an edge key to `~/.config/claude-speak.json` and starts the service at login (port 8765, listening locally only). It refuses any request without the token. `--uninstall` removes it. It uses `/usr/bin/python3` (Apple's command line tools).
-2. **A tunnel** to `http://localhost:8765`, with a fixed address: Cloudflare Tunnel, ngrok, Tailscale Funnel… With Cloudflare on a protected domain, add a WAF "Skip" rule and a configuration rule (security level at its lowest, browser integrity check off) for that hostname only: the bot challenge page would block the cloud session.
-3. **A key checked by the tunnel** (recommended): every call to the bridge carries the `X-Handfree-Key` header, with the value of `bridge_edge_key`. Have the tunnel block any request without the right value: then nothing reaches the Mac. With Cloudflare, a custom WAF rule placed **before** the "Skip" rule:
-   ```
-   (http.host eq "<your-tunnel>" and not any(http.request.headers["x-handfree-key"][*] eq "<value>"))  →  Block
-   ```
-4. **The cloud environment** (claude.ai, environment settings):
-   - variables: `HANDFREE_BRIDGE_URL` (the tunnel's address), `HANDFREE_BRIDGE_TOKEN` (the value of `bridge_token`) and, with step 3, `HANDFREE_BRIDGE_EDGE_KEY` (the value of `bridge_edge_key`);
-   - network: allow `github.com` and the tunnel's hostname if the environment filters outbound traffic;
-   - setup script:
-     ```
-     curl -fsSL https://raw.githubusercontent.com/fourthscale/handfree-code/main/bin/cloud-setup.sh | bash
-     ```
-     It installs the plugin and declares Spokenly at the tunnel's address, with the token and the key. It never fails: with a piece missing, the session just stays silent.
+Replace, in the commands below:
 
-Reading settings are the Mac's (`~/.config/claude-speak.json`): the Mac reads and asks. A cloud environment can change a few of them for its sessions with the optional `HANDFREE_OVERRIDES` variable, in JSON, for instance `{"first_paragraph_only": false, "language": "en"}`. Only `language`, `voice`, `validation_word`, `first_paragraph_only`, `pause_between_lines_seconds` and `silence_around_title_ms` are accepted: nothing that would make the Mac run a program.
+| Pattern | Example |
+|---|---|
+| `<HOSTNAME>` | `voice.example.com`, on a domain managed by Cloudflare |
+| `<TUNNEL>` | `handfree` |
+| `<TUNNEL-ID>` | printed by `cloudflared tunnel create` |
 
-Without `HANDFREE_BRIDGE_URL`, the plugin stays silent in the cloud. Its hooks on the Mac never go through the bridge.
+### 1. The bridge on the Mac
+
+```bash
+git clone https://github.com/fourthscale/handfree-code.git
+sh handfree-code/bin/install-bridge.sh
+```
+
+It generates two random keys in `~/.config/claude-speak.json`: `bridge_token` (checked by the Mac) and `bridge_edge_key` (checked by Cloudflare). Then it starts the service at login, on `127.0.0.1:8765` only. `--uninstall` removes the service.
+
+To copy a key to the clipboard without showing it:
+
+```bash
+plutil -extract bridge_token raw -o - ~/.config/claude-speak.json | pbcopy
+plutil -extract bridge_edge_key raw -o - ~/.config/claude-speak.json | pbcopy
+```
+
+To change the keys: delete them from the file, run `install-bridge.sh` again, then update the WAF rule and the cloud environment.
+
+### 2. The Cloudflare tunnel
+
+```bash
+brew install cloudflared
+cloudflared tunnel login
+cloudflared tunnel create <TUNNEL>
+cloudflared tunnel route dns <TUNNEL> <HOSTNAME>
+```
+
+`~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: <TUNNEL>
+credentials-file: /Users/<YOU>/.cloudflared/<TUNNEL-ID>.json
+ingress:
+  - hostname: <HOSTNAME>
+    service: http://localhost:8765
+  - service: http_status:404
+```
+
+Start it at login:
+
+```bash
+cloudflared service install
+```
+
+Another tunnel (ngrok, Tailscale Funnel…) works too, as long as its address is fixed.
+
+### 3. The Cloudflare rules
+
+Cloudflare dashboard > your domain > Security > WAF > **Custom rules**, in this order (use "Edit expression"):
+
+1. **Block requests without the key**: action *Block*.
+   ```
+   (http.host eq "<HOSTNAME>" and not any(http.request.headers["x-handfree-key"][*] eq "<BRIDGE-EDGE-KEY>"))
+   ```
+   Nothing without the key reaches your Mac.
+2. **Let the bridge through the bot protections**: action *Skip*, ticking all remaining custom rules, the managed rules and Super Bot Fight Mode.
+   ```
+   (http.host eq "<HOSTNAME>")
+   ```
+
+Then Rules > **Configuration Rules**, for `http.host eq "<HOSTNAME>"`: Security Level *Essentially Off*, Browser Integrity Check *Off*. Otherwise a challenge page answers the cloud session instead of your Mac.
+
+The free plan's Bot Fight Mode cannot be skipped by a rule: if it blocks the bridge, turn it off for the domain.
+
+### 4. Check from outside
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<HOSTNAME>/hook
+```
+
+`403`: Cloudflare blocks it, as it should without the key. With the key:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<HOSTNAME>/hook -H "X-Handfree-Key: $(plutil -extract bridge_edge_key raw -o - ~/.config/claude-speak.json)"
+```
+
+`401`: the request reached your Mac, which refuses it without the token. Everything is in place.
+
+### 5. The cloud environment
+
+On claude.ai, in the cloud environment's settings:
+
+- **Environment variables**:
+  ```
+  HANDFREE_BRIDGE_URL=https://<HOSTNAME>
+  HANDFREE_BRIDGE_TOKEN=<BRIDGE-TOKEN>
+  HANDFREE_BRIDGE_EDGE_KEY=<BRIDGE-EDGE-KEY>
+  ```
+- **Network**: if outbound traffic is filtered, allow `github.com`, `raw.githubusercontent.com` and `<HOSTNAME>`.
+- **Setup script**:
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/fourthscale/handfree-code/main/bin/cloud-setup.sh | bash
+  ```
+  It installs the plugin and declares Spokenly at the tunnel's address, with the token and the key. It never fails the environment: with a piece missing, sessions just stay silent.
+
+Optional: `HANDFREE_OVERRIDES` changes a few reading settings for that environment's sessions, in JSON, for instance `{"first_paragraph_only": false, "language": "en"}`. Accepted keys: `language`, `voice`, `validation_word`, `first_paragraph_only`, `pause_between_lines_seconds`, `silence_around_title_ms`. Nothing that would make the Mac run a program.
+
+Your sessions' text and your microphone go through the tunnel: use a provider you trust, and never publish the keys.
 
 ### How sessions reach Spokenly
 
-The `question_transport` setting, separate for local and cloud sessions:
+`question_transport`, set separately for local and cloud sessions:
 
 | Value | Effect |
 |---|---|
-| `mcp` | the session calls the `spokenly` MCP server it has declared (local default) |
-| `bridge` | the session goes through the tunnel (cloud default); locally, it does without Spokenly's MCP relay |
+| `mcp` | through the `spokenly` MCP server declared in Claude Code (local default) |
+| `bridge` | through the tunnel (cloud default) |
 | `none` | no spoken questions: they stay written |
 
-A session only gets the voice rules when its transport can succeed: a declared server for `mcp`, a responding Spokenly app for `bridge`.
+A session only gets the voice rules when its transport works. To change the local one (it also redeclares `spokenly`):
 
-To change the local sessions' transport, and redeclare `spokenly` accordingly:
-
-```
-sh bin/set-question-transport.sh mcp|bridge|none
+```bash
+sh handfree-code/bin/set-question-transport.sh mcp|bridge|none
 ```
 
-`bridge` locally needs `bridge_url` and `bridge_token` in the settings. For the cloud, the transport is set in `question_transport.cloud` on the Mac, and `spokenly` is declared by the environment's setup script.
-
-Your sessions' text and access to your microphone go through the tunnel: pick a provider you already trust with that traffic, and never publish the token.
+`bridge` locally needs `bridge_url` in the settings.
 
 ## Settings
 
@@ -157,60 +278,62 @@ All optional, in `~/.config/claude-speak.json`:
 | Key | Default | Purpose |
 |---|---|---|
 | `language` | the Mac's | spoken phrases and rules: `fr`, `en` or `de` (otherwise English) |
-| `voice` | system voice | name of a `say` voice to force |
-| `validation_word` | `stop` | word that sends a dictation; sessions learn to ignore it at the end of a message |
+| `voice` | system voice | a `say` voice to force |
+| `speak_command` | — | script that speaks instead of `say`; `say` takes over if it fails |
+| `validation_word` | `stop` | word that sends a dictation; sessions ignore it at the end of a message |
 | `first_paragraph_only` | `true` | `false` reads the whole reply right away |
-| `pause_between_lines_seconds` | `1.2` | silence between two lines, where a voice command can get through |
+| `pause_between_lines_seconds` | `1.2` | silence between lines, where a voice command gets through |
 | `silence_around_title_ms` | `800` | silence around the session's name |
-| `announce_session` | `on_change` | say the session's name only when the speaker changes, or `always` |
-| `pause_media` | `true` | pause the Now Playing app (music, YouTube…) while speaking, resume afterwards |
-| `max_dictation_seconds` | `180` | after a dictation abandoned without "Stop", reading resumes |
-| `question_tool` | `mcp__spokenly__ask_user_dictation` | the questions tool named in the voice rules |
-| `target_app` | `Claude` | app "Listen" brings forward; `iTerm2` or `Terminal` for Claude Code in a terminal |
-| `click_prompt` | auto | click into the message field: by default only for the Claude app |
+| `announce_session` | `on_change` | say the session's name when the speaker changes, or `always` |
+| `pause_media` | `true` | pause what plays while speaking |
+| `max_dictation_seconds` | `180` | after a dictation never sent, reading resumes |
+| `question_tool` | `mcp__spokenly__ask_user_dictation` | questions tool named in the voice rules |
+| `target_app` | `Claude` | app "Claude Listen" brings forward; `iTerm2` or `Terminal` for a terminal |
+| `click_prompt` | auto | click into the message field (only for the Claude app by default) |
 | `prompt_name` | `Prompt` | accessibility name of the Claude app's message field |
 | `prompt_fallback` | `{"x_ratio": 0.6, "from_bottom": 55}` | point clicked when the field is not found |
 | `spokenly_trigger` | `double_right_command` | or `none` |
 | `activate_delay_seconds` | `0.5` | wait after bringing the app forward |
 | `after_click_delay_seconds` | `0.3` | wait after the click |
 | `double_tap_gap_seconds` | `0.12` | gap between the two taps |
-| `away_after_idle_seconds` | `300` | past this much Mac idle time, questions go in writing |
+| `away_after_idle_seconds` | `300` | Mac idle time after which questions go in writing |
 | `voice_permissions` | `false` | answer permission prompts by voice |
 | `permission_answer_seconds` | `90` | how long to wait for the spoken answer |
-| `question_transport` | `{"local": "mcp", "cloud": "bridge"}` | how each kind of session reaches Spokenly: `mcp`, `bridge` or `none` |
-| `bridge_url` | — | the tunnel's public address, for the local `bridge` transport |
-| `bridge_token` | — | the bridge's token, created by `install-bridge.sh` |
-| `bridge_edge_key` | — | value of the `X-Handfree-Key` header, checked by the tunnel; created by `install-bridge.sh` |
-| `bridge_port` | `8765` | local port of the bridge service |
+| `question_transport` | `{"local": "mcp", "cloud": "bridge"}` | `mcp`, `bridge` or `none`, per kind of session |
+| `bridge_url` | — | the tunnel's address, for the local `bridge` transport |
+| `bridge_token` | — | created by `install-bridge.sh` |
+| `bridge_edge_key` | — | sent as `X-Handfree-Key`; created by `install-bridge.sh` |
+| `bridge_port` | `8765` | local port of the bridge |
 
-The questions hook reacts to any `mcp__…spokenly…__ask_user_dictation` tool. For another dictation tool, also change the `matcher` in `hooks/hooks.json`.
-
-## How "Listen" finds the field
-
-The Claude app's message field is found by its accessibility name, at the end of a remembered path (25 ms): it is clicked where it actually is, whatever the window size or screen. If that path no longer leads to the field (layout changed), the fallback point is clicked and the path is relearnt in the background (about 30 s), for next time.
+The question hooks match any `mcp__…spokenly…__ask_user_dictation` tool. For another dictation tool, change the `matcher` in `hooks/hooks.json` too.
 
 ## Troubleshooting
 
-- **A voice command does nothing**: a permission dropped. Untick and tick the app again in Accessibility. To find which one, read the permissions log right after the failure:
-  ```
+- **Nothing is read**: check voice mode (`/vocal on`), then `say hello`. A hook added mid-session only applies to new sessions.
+- **A voice command does nothing**: a permission dropped. Untick and tick the app again in Accessibility. To find which one, right after the failure:
+  ```bash
   /usr/bin/log show --last 5m --style compact --predicate 'process == "tccd"' | grep -E "PostEvent|AUTHREQ_SUBJECT|AUTHREQ_RESULT"
   ```
-  `authValue=0` followed by an `AUTHREQ_SUBJECT` names the refused program.
-- **"Shortcuts is not allowed to send keystrokes"**: remove Shortcuts from the list ("−") and add it back. If needed, `tccutil reset Accessibility com.apple.shortcuts` makes macOS ask again.
-- **Nothing is read**: check voice mode (`/vocal on`), then the system voice with `say hello`.
-- **A hook added mid-session is ignored**: open a new session.
+  `authValue=0` followed by `AUTHREQ_SUBJECT` names the refused program.
+- **"Shortcuts is not allowed to send keystrokes"**: remove Shortcuts from Accessibility ("−") and add it back, or run `tccutil reset Accessibility com.apple.shortcuts`.
+- **"Claude Listen" clicks the wrong place**: the field is found by its accessibility name. If the app's layout changed, a fallback point is clicked and the field is searched again in the background (about 30 s), for next time.
+- **A cloud session stays silent**: run the checks of *Check from outside*, then read the bridge's log: `tail ~/Library/Logs/handfree-bridge.log`.
 
 ## What an update can break
 
-- The Claude app may rename or translate its "Prompt" field: the fallback click takes over, and `prompt_name` can be set.
-- Session titles and the detection of delegated turns read Claude Code's internal transcript format. If it changes, the plugin falls back to the simple behaviour: folder name instead of title, reply read rather than muted.
-- The saved state carries a version number: a plugin version that does not recognise it starts over.
+- The Claude app may rename its "Prompt" field: the fallback click takes over, and `prompt_name` can be set.
+- Session titles and delegated turns are read from Claude Code's internal transcript format. If it changes, the plugin falls back to the folder name and reads the reply.
+- Pausing music uses a private macOS framework (MediaRemote), restricted since macOS 15.4: there, pausing may stop working. Speaking does not depend on it.
 
 ## Development
 
-```
+```bash
 tests/run.sh
 tests/bridge.sh
 ```
 
-Silent tests: a fake `say` writes to a file; state and settings live in a scratch folder. Run them before every release. The "Listen" part (click, accessibility) is tested by hand.
+Silent tests: a fake `say` writes to a file, and state and settings live in a scratch folder. Run them outside Claude Code's sandbox, before every release. "Claude Listen" (click, accessibility) is tested by hand.
+
+## License
+
+[MIT](LICENSE): free to use, change and redistribute, keeping the copyright notice.
