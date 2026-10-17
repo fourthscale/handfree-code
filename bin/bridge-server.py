@@ -72,9 +72,11 @@ class Handler(BaseHTTPRequestHandler):
         if not TOKEN or not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + TOKEN):
             return self.reply(401, b"")
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-        if self.path == "/hook":
+        # A bridge URL set with a trailing slash gives //mcp.
+        path = "/" + self.path.strip("/")
+        if path == "/hook":
             return self.handle_hook(body)
-        if self.path == "/mcp":
+        if path == "/mcp":
             return self.handle_mcp(body)
         self.reply(404, b"")
 
