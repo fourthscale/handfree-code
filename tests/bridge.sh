@@ -9,7 +9,7 @@ PORT=8799
 FAKE_SPOKENLY_PORT=8798
 TOKEN=test-token
 export HANDFREE_STATE_DIR="$WORK/state" HANDFREE_CONFIG="$WORK/config.json" HANDFREE_SAY_LOG="$WORK/said.log"
-export HANDFREE_BRIDGE_PORT=$PORT HANDFREE_IDLE_SECONDS=0 HANDFREE_SPOKENLY_URL="http://127.0.0.1:$FAKE_SPOKENLY_PORT"
+export HANDFREE_BRIDGE_PORT=$PORT HANDFREE_IDLE_SECONDS=0 HANDFREE_AUDIO_PLAYING=0 HANDFREE_SPOKENLY_URL="http://127.0.0.1:$FAKE_SPOKENLY_PORT"
 chmod +x "$ROOT/tests/fake-say.sh"
 printf '{"say_path": "%s", "language": "en", "announce_session": "always", "pause_between_lines_seconds": 0.1, "silence_around_title_ms": 1, "bridge_token": "%s"}\n' "$ROOT/tests/fake-say.sh" "$TOKEN" > "$HANDFREE_CONFIG"
 FAILS=0

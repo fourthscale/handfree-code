@@ -10,7 +10,7 @@ chmod +x "$ROOT/tests/fake-say.sh"
 FAILS=0
 
 configure() { printf '{"say_path": "%s", "language": "en", "announce_session": "always", "pause_between_lines_seconds": 0.1, "silence_around_title_ms": 1%s}\n' "$ROOT/tests/fake-say.sh" "${1:-}" > "$HANDFREE_CONFIG"; }
-hf() { HANDFREE_IDLE_SECONDS=${HANDFREE_IDLE_SECONDS:-0} osascript -l JavaScript "$SCRIPT" "$@"; }
+hf() { HANDFREE_IDLE_SECONDS=${HANDFREE_IDLE_SECONDS:-0} HANDFREE_AUDIO_PLAYING=${HANDFREE_AUDIO_PLAYING:-0} osascript -l JavaScript "$SCRIPT" "$@"; }
 transcript() { printf '{"type":"custom-title","customTitle":"%s"}\n' "$2" > "$WORK/$1.jsonl"; }
 reply() { printf '{"session_id":"%s","transcript_path":"%s/%s.jsonl","last_assistant_message":"%s"}' "$1" "$WORK" "$1" "$2" | hf >/dev/null; }
 said() { cat "$HANDFREE_SAY_LOG" 2>/dev/null; }
@@ -183,6 +183,24 @@ reset; printf '{"session_id":"a","transcript_path":"%s/a.jsonl","tool_input":{"q
 check "a question from another session says its name" "$(said)" "Session Project Alpha.*Other speaker"
 hf --done >/dev/null; wait_quiet 1
 configure
+
+# Pausing what plays: the play/pause key is recorded instead of pressed.
+export HANDFREE_MEDIA_KEY_LOG="$WORK/keys.log"
+rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
+HANDFREE_AUDIO_PLAYING=1 reply a 'Over the music.'; wait_quiet 2
+check "music playing: paused before speaking, resumed after" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^play-pause play-pause $"
+rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
+HANDFREE_AUDIO_PLAYING=0 reply a 'In silence.'; wait_quiet 2
+check "nothing playing: the key is never pressed" "[$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null)]" "\[\]"
+reply a 'Right after.'; wait_quiet 2
+HANDFREE_AUDIO_PLAYING=1 reply a 'Own voice still reported.'; wait_quiet 2
+check "our own voice is not taken for music" "[$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null)]" "\[\]"
+rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
+printf '{"session_id":"b","transcript_path":"%s/b.jsonl","tool_input":{"questions":["Over the music?"]}}' "$WORK" | HANDFREE_AUDIO_PLAYING=1 hf --question >/dev/null
+check "a question pauses the music too" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^play-pause $"
+hf --done >/dev/null; wait_quiet 1.5
+check "and the answer given, the music resumes" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^play-pause play-pause $"
+unset HANDFREE_MEDIA_KEY_LOG
 
 printf '{"version": 0, "queue": [{"bogus": true}]}' > "$HANDFREE_STATE_DIR/state.json"
 reset; reply a 'After migration.'; wait_quiet 1.5

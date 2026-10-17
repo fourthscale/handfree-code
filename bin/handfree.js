@@ -15,6 +15,7 @@
 // Internal: --read (the reader process), --learn-prompt-path (background search of the message field)
 
 ObjC.import('Foundation')
+ObjC.import('AppKit')
 ObjC.import('CoreGraphics')
 
 const STATE_VERSION = 1
@@ -33,6 +34,7 @@ const DEFAULTS = {
   pause_between_lines_seconds: 1.2, // Voice Control only matches a command spoken alone
   silence_around_title_ms: 800,
   announce_session: 'on_change', // or 'always': before every reply, question and resumed reading
+  pause_media: true, // pause the Now Playing app (music, YouTube…) while speaking, resume afterwards
   max_dictation_seconds: 180, // a dictation abandoned without "Stop" frees the reader after this
   first_paragraph_only: true, // the rest waits for "Continue"
   validation_word: 'stop', // the Voice Control word that sends a dictation; Spokenly may transcribe it
@@ -162,13 +164,56 @@ function macLanguage() {
 }
 
 function say(text) {
+  pauseMediaIfPlaying()
   runTask(CONFIG.say_path, CONFIG.voice ? ['-v', CONFIG.voice, text] : [text])
+  withState((state) => {
+    state.last_speech_end = now()
+  })
+}
+
+// ---------- pausing what plays while speaking
+
+// macOS keeps reporting audio about ten seconds after it stops: within that window, the sound may be our own voice.
+const AUDIO_SIGNAL_LINGER_SECONDS = 12
+const NX_KEYTYPE_PLAY = 16
+
+function audioIsPlaying() {
+  if (ENV.HANDFREE_AUDIO_PLAYING) return ENV.HANDFREE_AUDIO_PLAYING === '1'
+  return shell('pmset -g assertions').includes('audio-out')
+}
+
+// The play/pause key toggles the Now Playing app: pressed only when something plays, never on a doubt.
+function pauseMediaIfPlaying() {
+  if (!CONFIG.pause_media) return
+  withState((state) => {
+    if (state.media_paused || now() - state.last_speech_end < AUDIO_SIGNAL_LINGER_SECONDS || !audioIsPlaying()) return
+    pressPlayPause()
+    state.media_paused = true
+  })
+}
+
+function resumeMediaIfPaused(state) {
+  if (!state.media_paused) return
+  pressPlayPause()
+  state.media_paused = false
+}
+
+function pressPlayPause() {
+  if (ENV.HANDFREE_MEDIA_KEY_LOG) return writeFile(ENV.HANDFREE_MEDIA_KEY_LOG, (readFile(ENV.HANDFREE_MEDIA_KEY_LOG) || '') + 'play-pause\n')
+  try {
+    for (const down of [true, false]) {
+      const flags = down ? 0xa00 : 0xb00
+      const data1 = (NX_KEYTYPE_PLAY << 16) | ((down ? 0xa : 0xb) << 8)
+      const event = $.NSEvent.otherEventWithTypeLocationModifierFlagsTimestampWindowNumberContextSubtypeData1Data2(14, $.NSMakePoint(0, 0), flags, 0, 0, null, 8, data1, -1)
+      $.CGEventPost(0, event.CGEvent)
+    }
+  } catch (e) {} // a key that cannot be pressed must never silence the voice
 }
 
 // ---------- state, shared by every process, behind a lock
 
 function emptyState() {
-  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, voice_off: false, prompt_path: null, learning_since: null }
+  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, voice_off: false, prompt_path: null, learning_since: null, media_paused: false, last_speech_end: 0 }
 }
 
 function withState(change) {
@@ -351,7 +396,10 @@ function readQueue() {
   for (;;) {
     const line = withState((state) => {
       const next = nextLineToSay(state)
-      if (!next) state.reader_pid = null
+      if (!next) {
+        state.reader_pid = null
+        if (!isDictating(state)) resumeMediaIfPaused(state)
+      }
       return next
     })
     if (!line) return
@@ -602,6 +650,7 @@ function switchVoiceMode(on) {
     if (!on) {
       killReader(state)
       Object.assign(state, { current: null, queue: [], dictating_since: null })
+      resumeMediaIfPaused(state)
     }
   })
   say(on ? PHRASE.voice_on : PHRASE.voice_off)
