@@ -1,0 +1,658 @@
+// handfree-code — read Claude Code aloud and drive it by voice on macOS.
+// Runs with `osascript -l JavaScript handfree.js <command>`: osascript ships with every Mac, unlike python3.
+//
+// Hooks
+//   (none)            Stop: queues the new reply (stdin)
+//   --question        PreToolUse on the Spokenly tool: pauses the queue, reads the question, then waits for the dictation
+//   --notify          Notification: queues « Claude needs your answer »
+//   --session-rules   SessionStart: prints the voice rules, refreshes the stable copy the Shortcuts call
+// Voice commands (macOS Shortcuts)
+//   --listen          « Écoute »: silence, bring the app forward, click its message field, start Spokenly
+//   --done            « Stop »: the dictation is sent, the queue goes on
+//   --stop / --resume / --restart   « Tais-toi » / « Continue » / « Recommence »
+//   --on / --off / --toggle         voice mode
+// Internal: --read (the reader process), --learn-prompt-path (background search of the message field)
+
+ObjC.import('Foundation')
+ObjC.import('CoreGraphics')
+
+const STATE_VERSION = 1
+const HOME = ObjC.unwrap($.NSHomeDirectory())
+const ENV = ObjC.deepUnwrap($.NSProcessInfo.processInfo.environment)
+const CONFIG_PATH = ENV.HANDFREE_CONFIG || `${HOME}/.config/claude-speak.json`
+const STATE_DIR = ENV.HANDFREE_STATE_DIR || `${HOME}/Library/Caches/claude-speak`
+const STATE_PATH = `${STATE_DIR}/state.json`
+const LOCK_PATH = `${STATE_DIR}/state.lock`
+const STABLE_COPY = `${HOME}/Library/Application Support/handfree-code/handfree.js`
+
+const DEFAULTS = {
+  language: null, // null: the Mac's first language
+  voice: null, // null: the system voice and rate (Accessibility > Spoken Content)
+  say_path: '/usr/bin/say',
+  pause_between_lines_seconds: 1.2, // Voice Control only matches a command spoken alone
+  silence_around_title_ms: 800,
+  max_dictation_seconds: 180, // a dictation abandoned without « Stop » frees the reader after this
+  first_paragraph_only: true, // the rest waits for « Continue »
+  validation_word: 'stop', // the Voice Control word that sends a dictation; Spokenly may transcribe it
+  question_tool: 'mcp__spokenly__ask_user_dictation',
+  target_app: 'Claude', // the app « Écoute » brings forward
+  click_prompt: null, // null: only for the Claude desktop app; a terminal has no field to click
+  prompt_name: 'Prompt', // accessibility description of the desktop app's message field
+  prompt_fallback: { x_ratio: 0.6, from_bottom: 55 }, // clicked while the field's path is relearnt
+  spokenly_trigger: 'double_right_command', // or 'none' when Spokenly is started some other way
+  activate_delay_seconds: 0.5,
+  after_click_delay_seconds: 0.3,
+  double_tap_gap_seconds: 0.12,
+  away_after_idle_seconds: 300, // keyboard and mouse untouched this long: the user is not at the Mac (on the phone, say)
+  // How a session reaches Spokenly: 'mcp' (its MCP server declared in the session), 'bridge' (through the tunnel),
+  // or 'none' (questions stay written). Set per context; switch the local one with bin/set-question-transport.sh.
+  question_transport: { local: 'mcp', cloud: 'bridge' },
+  bridge_url: null, // the tunnel's public address, used when the local transport is 'bridge'
+}
+
+const PHRASES = {
+  fr: { session: 'Session {title}.', question: 'Une question.', link: 'lien', code: 'Bloc de code omis.', more: 'Il y a une suite.', voice_on: 'Mode vocal activé.', voice_off: 'Mode vocal désactivé.', idle: "Claude t'attend", waiting: 'Claude attend ta réponse' },
+  en: { session: 'Session {title}.', question: 'A question.', link: 'link', code: 'Code block skipped.', more: 'There is more.', voice_on: 'Voice mode on.', voice_off: 'Voice mode off.', idle: 'Claude is waiting', waiting: 'Claude needs your answer' },
+  de: { session: 'Sitzung {title}.', question: 'Eine Frage.', link: 'Link', code: 'Codeblock ausgelassen.', more: 'Es gibt noch mehr.', voice_on: 'Sprachmodus an.', voice_off: 'Sprachmodus aus.', idle: 'Claude wartet', waiting: 'Claude wartet auf deine Antwort' },
+}
+
+const SESSION_RULES = {
+  fr:
+    'Mode vocal actif.\n' +
+    "- Quand tu dois me poser une question et attendre ma réponse (un grill, un choix, une validation), utilise l'outil `{tool}` plutôt que `AskUserQuestion`. " +
+    "Y compris la question de fin de tour : les boutons de l'app ne me sont pas lus, je ne peux pas y répondre à la voix.\n" +
+    "- Je dicte et je valide en disant « {word} » : un « {word} » en fin de message ou de réponse dictée est cette commande, pas une demande d'arrêter. Ignore-le.",
+  en:
+    'Voice mode is on.\n' +
+    '- When you need to ask me a question and wait for the answer (a grill, a choice, a go-ahead), use the `{tool}` tool rather than `AskUserQuestion`, ' +
+    "including the end-of-turn question: the app's buttons are not read to me and I cannot answer them by voice.\n" +
+    '- I dictate and send by saying "{word}": a trailing "{word}" in a dictated message or answer is that command, not a request to stop. Ignore it.',
+}
+
+const DELEGATED_TURN_ORIGINS = ['sdk', 'peer'] // an unknown value, after a Claude Code update, reads the reply
+const LEARNING_TIMEOUT_SECONDS = 120
+const LOCK_STALE_SECONDS = 10
+
+// ---------- system helpers
+
+const app = Application.currentApplication()
+app.includeStandardAdditions = true
+
+function readFile(path) {
+  const text = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null)
+  return text.isNil() ? null : ObjC.unwrap(text)
+}
+
+function writeFile(path, text) {
+  ensureDirectory(path.replace(/\/[^/]*$/, ''))
+  $(text).writeToFileAtomicallyEncodingError(path, true, $.NSUTF8StringEncoding, null)
+}
+
+function ensureDirectory(path) {
+  $.NSFileManager.defaultManager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(path, true, $(), null)
+}
+
+function readJson(path) {
+  try {
+    return JSON.parse(readFile(path))
+  } catch (e) {
+    return null
+  }
+}
+
+function shell(command) {
+  try {
+    return app.doShellScript(command)
+  } catch (e) {
+    return ''
+  }
+}
+
+function quote(text) {
+  return "'" + String(text).replace(/'/g, "'\\''") + "'"
+}
+
+function now() {
+  return Date.now() / 1000
+}
+
+function runTask(path, args) {
+  const task = $.NSTask.launchedTaskWithLaunchPathArguments(path, args)
+  task.waitUntilExit
+}
+
+function readStdin() {
+  const data = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile
+  const text = ObjC.unwrap($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding))
+  try {
+    return JSON.parse(text)
+  } catch (e) {
+    return {}
+  }
+}
+
+// ---------- configuration and phrases
+
+// A cloud environment may adjust how its sessions are read; nothing that would run a program on this Mac.
+const CLOUD_OVERRIDABLE = ['language', 'voice', 'validation_word', 'first_paragraph_only', 'pause_between_lines_seconds', 'silence_around_title_ms']
+const CONFIG = Object.assign({}, DEFAULTS, readJson(CONFIG_PATH) || {}, cloudOverrides())
+
+function cloudOverrides() {
+  let overrides
+  try {
+    overrides = JSON.parse(ENV.HANDFREE_OVERRIDES || '{}')
+  } catch (e) {
+    return {}
+  }
+  return Object.fromEntries(Object.entries(overrides || {}).filter(([key]) => CLOUD_OVERRIDABLE.includes(key)))
+}
+const LANGUAGE = (CONFIG.language || macLanguage()).slice(0, 2)
+const PHRASE = PHRASES[LANGUAGE] || PHRASES.en
+const SILENCE = `[[slnc ${Math.round(CONFIG.silence_around_title_ms)}]]`
+
+function macLanguage() {
+  const match = shell('defaults read -g AppleLanguages').match(/"?([a-z]{2})[-_"]/)
+  return match ? match[1] : 'en'
+}
+
+function say(text) {
+  runTask(CONFIG.say_path, CONFIG.voice ? ['-v', CONFIG.voice, text] : [text])
+}
+
+// ---------- state, shared by every process, behind a lock
+
+function emptyState() {
+  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, reader_pid: null, next_id: 0, dictating_since: null, voice_off: false, prompt_path: null, learning_since: null }
+}
+
+function withState(change) {
+  ensureDirectory(STATE_DIR)
+  acquireLock()
+  try {
+    const saved = readJson(STATE_PATH)
+    // A state written by another plugin version may mean something else: start over.
+    const state = saved && saved.version === STATE_VERSION ? Object.assign(emptyState(), saved) : emptyState()
+    const result = change(state)
+    writeFile(STATE_PATH, JSON.stringify(state))
+    return result
+  } finally {
+    releaseLock()
+  }
+}
+
+function acquireLock() {
+  const manager = $.NSFileManager.defaultManager
+  for (;;) {
+    if (manager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(LOCK_PATH, false, $(), null)) return
+    const attributes = manager.attributesOfItemAtPathError(LOCK_PATH, null)
+    if (!attributes.isNil() && now() - attributes.fileModificationDate.timeIntervalSince1970 > LOCK_STALE_SECONDS) releaseLock()
+    delay(0.02)
+  }
+}
+
+function releaseLock() {
+  $.NSFileManager.defaultManager.removeItemAtPathError(LOCK_PATH, null)
+}
+
+// ---------- transcripts
+
+function readTranscript(path) {
+  const text = path ? readFile(path) : null
+  if (!text) return []
+  return text.split('\n').flatMap((line) => {
+    try {
+      return [JSON.parse(line)]
+    } catch (e) {
+      return []
+    }
+  })
+}
+
+function promptText(entry) {
+  const content = (entry.message || {}).content
+  if (typeof content === 'string') return content
+  return (content || []).filter((b) => b && b.type === 'text').map((b) => b.text || '').join(' ')
+}
+
+function lastReply(entries) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]
+    if (entry.type !== 'assistant') continue
+    const text = ((entry.message || {}).content || []).filter((b) => b && b.type === 'text' && (b.text || '').trim()).map((b) => b.text).join('\n')
+    if (text) return text
+  }
+  return ''
+}
+
+// The session that delegated the turn relays its outcome: reading it here too says it twice.
+function startedByAnotherSession(entries) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]
+    if (entry.type !== 'user' || !entry.turnOrigin || !promptText(entry).trim()) continue
+    // App events are also sdk-originated but arrive wrapped in a tag; briefs and messages do not.
+    return DELEGATED_TURN_ORIGINS.includes(entry.turnOrigin) && !promptText(entry).trimStart().startsWith('<')
+  }
+  return false
+}
+
+function sessionTitle(entries, cwd) {
+  const titles = entries.filter((e) => e.type === 'custom-title' && e.customTitle).map((e) => e.customTitle)
+  return titles.length ? titles[titles.length - 1] : (cwd || '').split('/').pop() || '?'
+}
+
+// ---------- turning markdown into speakable lines
+
+function withoutCodeBlocks(text) {
+  return text.replace(/```[\s\S]*?```/g, `\n${PHRASE.code}\n`)
+}
+
+function stripMarkdown(line) {
+  return line
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/<?https?:\/\/[^\s>)]*[^\s>).,;:!?]>?/g, PHRASE.link)
+    .replace(/[`*_>#]/g, '')
+    .replace(/^\s*(?:[-•]|\d+\.)\s+/, '')
+    .trim()
+}
+
+function tableRowAsSentence(line) {
+  const cells = line.trim().replace(/^\||\|$/g, '').split('|').map(stripMarkdown)
+  if (cells.filter(Boolean).every((c) => /^:?-+:?$/.test(c))) return ''
+  return cells.filter(Boolean).join(', ') + '.'
+}
+
+function speakableLines(text) {
+  return withoutCodeBlocks(text)
+    .split('\n')
+    .map((line) => (line.trimStart().startsWith('|') ? tableRowAsSentence(line) : stripMarkdown(line)))
+    .filter(Boolean)
+    .map((line) => (/[.:?!]$/.test(line) ? line : line + '.'))
+}
+
+function linesThroughFirstParagraph(text) {
+  let count = 0
+  for (const paragraph of withoutCodeBlocks(text).trim().split(/\n\s*\n/)) {
+    count += speakableLines(paragraph).length
+    if (count && !/^\s*[|#]/.test(paragraph)) return count
+  }
+  return 0
+}
+
+// ---------- the reader process
+
+function isAlive(pid) {
+  return Boolean(pid) && shell(`kill -0 ${pid} && echo alive`) === 'alive'
+}
+
+function isDictating(state) {
+  return Boolean(state.dictating_since) && now() - state.dictating_since < CONFIG.max_dictation_seconds
+}
+
+function startReaderUnlessRunning(state) {
+  if (isAlive(state.reader_pid) || isDictating(state)) return
+  state.reader_pid = Number(shell(`osascript -l JavaScript ${quote(scriptPath())} --read >/dev/null 2>&1 & echo $!`)) || null
+  state.announced_id = null
+}
+
+function killReader(state) {
+  if (isAlive(state.reader_pid)) shell(`kill ${state.reader_pid}`)
+  shell('killall say')
+  state.reader_pid = null
+}
+
+function announcement(title) {
+  return `${SILENCE} ${PHRASE.session.replace('{title}', title)} ${SILENCE} `
+}
+
+function nextLineToSay(state) {
+  if (isDictating(state)) return null
+  for (;;) {
+    const item = state.current
+    if (item && item.position < Math.min(item.pause_at, item.lines.length)) {
+      // Announced at the start of each reply and after every interruption, so chained replies stay attributable.
+      const intro = state.announced_id !== item.id ? announcement(item.title) : ''
+      state.announced_id = item.id
+      return { id: item.id, text: intro + item.lines[item.position] }
+    }
+    // Stopped after the first paragraph with more to come: say so once, or the rest goes unnoticed.
+    if (item && item.position < item.lines.length && !item.more_announced) {
+      item.more_announced = true
+      return { id: item.id, text: PHRASE.more, cue: true }
+    }
+    if (!state.queue.length) return null
+    state.current = state.queue.shift()
+  }
+}
+
+function readQueue() {
+  for (;;) {
+    const line = withState((state) => {
+      const next = nextLineToSay(state)
+      if (!next) state.reader_pid = null
+      return next
+    })
+    if (!line) return
+    say(line.text)
+    withState((state) => {
+      if (!line.cue && state.current && state.current.id === line.id) state.current.position += 1
+    })
+    delay(CONFIG.pause_between_lines_seconds)
+  }
+}
+
+function enqueue(data, entries, lines, pauseAt) {
+  const title = sessionTitle(entries, data.cwd)
+  withState((state) => {
+    state.queue.push({ id: state.next_id, session: data.session_id, title, lines, position: 0, pause_at: pauseAt })
+    state.next_id += 1
+    startReaderUnlessRunning(state)
+  })
+}
+
+// ---------- hooks
+
+const UNSPOKEN_QUESTION = {
+  fr: "Ce tour se termine sur une question posée seulement à l'écrit ou dans la boîte de l'app : l'utilisateur pilote à la voix et ne peut pas y répondre. Pose-la maintenant avec l'outil `{tool}`, puis termine sans la répéter à l'écrit.",
+  en: "This turn ends on a question asked only in writing or in the app's box: the user drives by voice and cannot answer it. Ask it now with the `{tool}` tool, then finish without repeating it in writing.",
+}
+
+function currentTurn(entries) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].type === 'user' && entries[i].turnOrigin && promptText(entries[i]).trim()) return entries.slice(i + 1)
+  }
+  return entries
+}
+
+function asksInTheAppBox(turn) {
+  return turn.some((e) => e.type === 'assistant' && ((e.message || {}).content || []).some((b) => b && b.type === 'tool_use' && /wrap_up$/.test(b.name || '') && ((b.input || {}).ask || '').trim()))
+}
+
+function endsOnWrittenQuestion(reply) {
+  const paragraphs = withoutCodeBlocks(reply).trim().split(/\n\s*\n/)
+  return paragraphs[paragraphs.length - 1].split('\n').some((line) => /\?\s*[»"*_)]*\s*$/.test(line))
+}
+
+// A question only on screen is lost to someone who is not looking: the turn goes on until it is asked aloud.
+// `stop_hook_active` means this turn was already sent back once: do not loop.
+function unspokenQuestionBlock(data, entries, reply) {
+  if (data.stop_hook_active || !questionsCanBeSpoken() || userIsAway()) return null
+  if (!asksInTheAppBox(currentTurn(entries)) && !endsOnWrittenQuestion(reply)) return null
+  const reason = (UNSPOKEN_QUESTION[LANGUAGE] || UNSPOKEN_QUESTION.en).replace('{tool}', CONFIG.question_tool)
+  return JSON.stringify({ decision: 'block', reason })
+}
+
+function queueNewReply() {
+  const data = readStdin()
+  const entries = readTranscript(data.transcript_path)
+  if (startedByAnotherSession(entries)) return
+  const reply = data.last_assistant_message || lastReply(entries)
+  const block = unspokenQuestionBlock(data, entries, reply)
+  if (block) return block
+  const lines = speakableLines(reply)
+  if (!lines.length) lines.push(PHRASE.idle)
+  const pauseAt = (CONFIG.first_paragraph_only ? linesThroughFirstParagraph(reply) : 0) || lines.length
+  enqueue(data, entries, lines, pauseAt)
+}
+
+function queueWaitingNotice() {
+  const data = readStdin()
+  enqueue(data, readTranscript(data.transcript_path), [PHRASE.waiting], 1)
+}
+
+const AWAY = {
+  fr: "L'utilisateur n'est pas devant son Mac (aucune activité depuis {minutes} min) : Spokenly ne l'atteindrait pas. Pose ta question par écrit dans ta réponse.",
+  en: 'The user is not at their Mac (no activity for {minutes} min): Spokenly would not reach them. Ask your question in writing in your reply.',
+}
+
+function idleSeconds() {
+  const output = ENV.HANDFREE_IDLE_SECONDS || shell("ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {print int($NF/1000000000); exit}'")
+  return Number(output) || 0
+}
+
+function userIsAway() {
+  return idleSeconds() >= CONFIG.away_after_idle_seconds
+}
+
+function readQuestion() {
+  if (userIsAway()) {
+    const reason = (AWAY[LANGUAGE] || AWAY.en).replace('{minutes}', Math.round(idleSeconds() / 60))
+    return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } })
+  }
+  const data = readStdin()
+  const entries = readTranscript(data.transcript_path)
+  const questions = (data.tool_input || {}).questions || []
+  // The queue stays paused: restarting it would talk over the answer being dictated.
+  withState(killReader)
+  say(`${announcement(sessionTitle(entries, data.cwd))}${PHRASE.question} ${SILENCE} ${questions.join(' ')}`)
+  startDictating()
+}
+
+function printSessionRules() {
+  refreshStableCopy()
+  if (!questionsCanBeSpoken()) return ''
+  const rules = SESSION_RULES[LANGUAGE] || SESSION_RULES.en
+  return rules.replace(/\{word\}/g, CONFIG.validation_word).replace('{tool}', CONFIG.question_tool)
+}
+
+// The bridge service marks the hooks it runs for a cloud session.
+const CONTEXT = ENV.HANDFREE_CONTEXT === 'cloud' ? 'cloud' : 'local'
+
+// Rules naming a tool the session cannot reach would send it looking for nothing.
+function questionsCanBeSpoken() {
+  const transport = Object.assign({}, DEFAULTS.question_transport, CONFIG.question_transport)[CONTEXT]
+  if (transport === 'none') return false
+  if (CONTEXT === 'cloud') return transport !== 'bridge' || spokenlyResponds() // a cloud session's own config is out of sight here
+  return questionToolIsDeclared() && (transport !== 'bridge' || spokenlyResponds())
+}
+
+function spokenlyResponds() {
+  if (ENV.HANDFREE_SPOKENLY_UP) return ENV.HANDFREE_SPOKENLY_UP === '1'
+  const url = ENV.HANDFREE_SPOKENLY_URL || 'http://localhost:51089'
+  return shell(`curl -s -m 2 -o /dev/null -w '%{http_code}' -X POST ${quote(url)} -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":0,"method":"tools/list"}'`) === '200'
+}
+
+function questionToolIsDeclared() {
+  const server = CONFIG.question_tool.split('__')[1]
+  const settings = readJson(`${HOME}/.claude.json`) || {}
+  const declared = [settings.mcpServers || {}, ...Object.values(settings.projects || {}).map((p) => p.mcpServers || {})]
+  return declared.some((servers) => server in servers)
+}
+
+// Shortcuts and the bridge service need a path that survives plugin updates; the plugin's folder changes with every version.
+function refreshStableCopy() {
+  const sourceDir = scriptPath().replace(/\/[^/]*$/, '')
+  const stableDir = STABLE_COPY.replace(/\/[^/]*$/, '')
+  for (const name of ['handfree.js', 'bridge-server.py']) {
+    const source = readFile(`${sourceDir}/${name}`)
+    if (source && source !== readFile(`${stableDir}/${name}`)) writeFile(`${stableDir}/${name}`, source)
+  }
+}
+
+function scriptPath() {
+  return ObjC.unwrap($.NSProcessInfo.processInfo.arguments).map(ObjC.unwrap).find((a) => /\.js$/.test(a))
+}
+
+// ---------- voice commands
+
+function startDictating() {
+  withState((state) => {
+    killReader(state)
+    state.dictating_since = now()
+  })
+}
+
+function doneDictating() {
+  withState((state) => {
+    state.dictating_since = null
+    startReaderUnlessRunning(state)
+  })
+}
+
+function stop() {
+  withState(killReader)
+}
+
+function resume() {
+  withState((state) => {
+    if (state.current) state.current.pause_at = state.current.lines.length
+    startReaderUnlessRunning(state)
+  })
+}
+
+function restart() {
+  withState((state) => {
+    killReader(state)
+    if (state.current) Object.assign(state.current, { position: 0, pause_at: state.current.lines.length })
+    startReaderUnlessRunning(state)
+  })
+}
+
+function switchVoiceMode(on) {
+  withState((state) => {
+    state.voice_off = !on
+    if (!on) {
+      killReader(state)
+      Object.assign(state, { current: null, queue: [], dictating_since: null })
+    }
+  })
+  say(on ? PHRASE.voice_on : PHRASE.voice_off)
+}
+
+function isVoiceModeOn() {
+  return withState((state) => !state.voice_off)
+}
+
+// ---------- « Écoute »: focus the message field and start Spokenly
+
+const RIGHT_COMMAND = 54
+const FLAGS_CHANGED = 12
+const COMMAND_FLAG = 0x100000 | 0x10
+
+function click([x, y]) {
+  const point = $.CGPointMake(x, y)
+  $.CGEventPost(0, $.CGEventCreateMouseEvent(null, 1, point, 0))
+  delay(0.05)
+  $.CGEventPost(0, $.CGEventCreateMouseEvent(null, 2, point, 0))
+}
+
+function tapRightCommand() {
+  const down = $.CGEventCreateKeyboardEvent(null, RIGHT_COMMAND, true)
+  $.CGEventSetType(down, FLAGS_CHANGED)
+  $.CGEventSetFlags(down, COMMAND_FLAG)
+  $.CGEventPost(0, down)
+  delay(0.03)
+  const up = $.CGEventCreateKeyboardEvent(null, RIGHT_COMMAND, false)
+  $.CGEventSetType(up, FLAGS_CHANGED)
+  $.CGEventSetFlags(up, 0)
+  $.CGEventPost(0, up)
+}
+
+function promptCenter(win, path) {
+  try {
+    let element = win
+    for (const i of path) element = element.uiElements[i]
+    if (element.description() !== CONFIG.prompt_name) return null
+    const [x, y] = element.position()
+    const [w, h] = element.size()
+    return [x + w / 2, y + h / 2]
+  } catch (e) {
+    return null
+  }
+}
+
+function clickPrompt() {
+  const win = Application('System Events').processes.byName(CONFIG.target_app).windows[0]
+  const path = withState((state) => state.prompt_path) || []
+  const center = promptCenter(win, path)
+  if (center) return click(center)
+  const [x, y] = win.position()
+  const [w, h] = win.size()
+  click([x + w * CONFIG.prompt_fallback.x_ratio, y + h - CONFIG.prompt_fallback.from_bottom])
+  startLearningPromptPath()
+}
+
+function listen() {
+  startDictating()
+  Application(CONFIG.target_app).activate()
+  delay(CONFIG.activate_delay_seconds)
+  const shouldClick = CONFIG.click_prompt === null ? CONFIG.target_app === 'Claude' : CONFIG.click_prompt
+  if (shouldClick) {
+    clickPrompt()
+    delay(CONFIG.after_click_delay_seconds)
+  }
+  if (CONFIG.spokenly_trigger === 'double_right_command') {
+    tapRightCommand()
+    delay(CONFIG.double_tap_gap_seconds)
+    tapRightCommand()
+  }
+}
+
+// A full search of the window takes ~30 s: it runs behind, for the next « Écoute ».
+function startLearningPromptPath() {
+  const alreadyLearning = withState((state) => {
+    if (state.learning_since && now() - state.learning_since < LEARNING_TIMEOUT_SECONDS) return true
+    state.learning_since = now()
+    return false
+  })
+  if (!alreadyLearning) shell(`osascript -l JavaScript ${quote(scriptPath())} --learn-prompt-path >/dev/null 2>&1 &`)
+}
+
+function learnPromptPath() {
+  const process = Application('System Events').processes.byName(CONFIG.target_app)
+  try {
+    process.attributes.byName('AXManualAccessibility').value = true
+  } catch (e) {}
+  let found = null
+  const walk = (element, path, depth) => {
+    if (found || depth > 60) return
+    let kids
+    try {
+      kids = element.uiElements()
+    } catch (e) {
+      return
+    }
+    for (let i = 0; i < kids.length && !found; i++) {
+      try {
+        if (kids[i].role() === 'AXTextArea' && kids[i].description() === CONFIG.prompt_name) {
+          found = path.concat(i)
+          return
+        }
+      } catch (e) {}
+      walk(kids[i], path.concat(i), depth + 1)
+    }
+  }
+  walk(process.windows[0], [], 0)
+  withState((state) => {
+    state.learning_since = null
+    if (found) state.prompt_path = found
+  })
+}
+
+// ---------- entry point
+
+const COMMANDS = {
+  '': queueNewReply,
+  '--question': readQuestion,
+  '--notify': queueWaitingNotice,
+  '--session-rules': printSessionRules,
+  '--listen': listen,
+  '--done': doneDictating,
+  '--dictating': startDictating,
+  '--stop': stop,
+  '--resume': resume,
+  '--restart': restart,
+  '--on': () => switchVoiceMode(true),
+  '--off': () => switchVoiceMode(false),
+  '--toggle': () => switchVoiceMode(!isVoiceModeOn()),
+  '--read': readQueue,
+  '--learn-prompt-path': learnPromptPath,
+}
+const SILENT_WHEN_OFF = ['', '--question', '--notify', '--session-rules', '--listen']
+
+function run(argv) {
+  const command = argv[0] || ''
+  if (!(command in COMMANDS)) return `unknown command: ${command}`
+  if (SILENT_WHEN_OFF.includes(command) && !isVoiceModeOn()) return ''
+  const output = COMMANDS[command]()
+  return typeof output === 'string' ? output : ''
+}

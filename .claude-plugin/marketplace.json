@@ -1,0 +1,14 @@
+{
+  "name": "handfree-code",
+  "description": "Hands-free voice control for Claude Code on macOS.",
+  "owner": {
+    "name": "Ludovic Raymond"
+  },
+  "plugins": [
+    {
+      "name": "handfree-code",
+      "source": "./",
+      "description": "Drive Claude Code by voice on macOS: replies and questions read aloud, dictation through Spokenly, voice commands through Voice Control."
+    }
+  ]
+}
