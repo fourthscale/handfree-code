@@ -55,6 +55,14 @@ check_not "nothing is read while dictating" "$(said)" "During"
 hf --done >/dev/null; wait_quiet 1.5
 check "Stop lets the queue go on" "$(said)" "During the dictation"
 
+reset; reply a 'A long line being read.\nNext line.'; sleep 0.3
+printf '{"session_id":"b","transcript_path":"%s/b.jsonl","tool_input":{"questions":["Shall we?"]}}' "$WORK" | hf --question >/dev/null
+check "a question lets the current line end first" "$(said | tr '\n' ' ')" "A long line being read.*A question.*Shall we"
+printf '{"session_id":"b","transcript_path":"%s/b.jsonl"}' "$WORK" | hf --notify; sleep 1
+check_not "the waiting notice is dropped while the answer is dictated" "$(said)" "Claude needs your answer"
+check_not "and holds the rest until the answer" "$(said)" "Next line"
+hf --done >/dev/null; wait_quiet 1.5
+check "the rest follows the answer" "$(said)" "Next line"
 reset; printf '{"session_id":"b","transcript_path":"%s/b.jsonl","tool_input":{"questions":["Shall we?"]}}' "$WORK" | hf --question >/dev/null
 check "a question is announced with its session" "$(said)" "Session Project Beta.*A question.*Shall we"
 reply a 'After the question.'; sleep 1
@@ -131,6 +139,10 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         msg = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         if msg.get("method") == "tools/call":
+            import os
+            log = os.path.join(os.path.dirname(sys.argv[2]), "said.log")
+            spoken = open(log).read() if os.path.exists(log) else ""
+            open(os.path.join(os.path.dirname(sys.argv[2]), "order.log"), "w").write("said-then-asked" if "Permission requested" in spoken else "asked-too-early")
             out = {"jsonrpc": "2.0", "id": msg["id"], "result": {"content": [{"type": "text", "text": "Q: x\nA: " + open(sys.argv[2]).read()}]}}
         else:
             out = {"jsonrpc": "2.0", "id": msg.get("id"), "result": {"tools": []}}
@@ -141,13 +153,14 @@ ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 SPOKENLY_PID=$!
 sleep 0.5
 permission() {  # $1: the spoken answer
-  printf '%s' "$1" > "$WORK/answer.txt"
+  printf '%s' "$1" > "$WORK/answer.txt"; export HANDFREE_FAKE_SAY_SECONDS=2
   printf '{"session_id":"a","transcript_path":"%s/a.jsonl","tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' "$WORK" | HANDFREE_SPOKENLY_URL=http://127.0.0.1:8796 hf --permission
 }
 configure ', "voice_permissions": true'
 reset; out=$(permission 'oui stop')
 check "a spoken yes allows" "$out" '"behavior":"allow"'
 check "the request is read with its session" "$(said)" "Session Project Alpha.*Permission requested: git commit"
+check "the request is read in full before listening" "$(cat "$WORK/order.log" 2>/dev/null)" "said-then-asked"
 check "deny on a spoken no" "$(permission 'non')" '"behavior":"deny"'
 check "an unclear answer leaves the dialog" "[$(permission 'well I do not know')]" "\[\]"
 check "a mixed answer leaves the dialog" "[$(permission 'yes no')]" "\[\]"
@@ -155,6 +168,7 @@ check "away from the Mac, the dialog shows as usual" "[$(HANDFREE_IDLE_SECONDS=3
 configure
 check "off by default" "[$(permission 'yes')]" "\[\]"
 kill "$SPOKENLY_PID" 2>/dev/null; wait "$SPOKENLY_PID" 2>/dev/null
+unset HANDFREE_FAKE_SAY_SECONDS
 
 printf '{"version": 0, "queue": [{"bogus": true}]}' > "$HANDFREE_STATE_DIR/state.json"
 reset; reply a 'After migration.'; wait_quiet 1.5

@@ -75,6 +75,7 @@ const SESSION_RULES = {
 
 const DELEGATED_TURN_ORIGINS = ['sdk', 'peer'] // an unknown value, after a Claude Code update, reads the reply
 const LEARNING_TIMEOUT_SECONDS = 120
+const MAX_LINE_WAIT_SECONDS = 20
 const LOCK_STALE_SECONDS = 10
 
 // ---------- system helpers
@@ -400,6 +401,8 @@ function queueNewReply() {
 
 function queueWaitingNotice() {
   const data = readStdin()
+  // Fired a few seconds into a question or permission prompt that is already being answered by voice.
+  if (withState(isDictating)) return
   enqueue(data, readTranscript(data.transcript_path), [PHRASE.waiting], 1)
 }
 
@@ -460,7 +463,7 @@ function answerPermission() {
   if (!CONFIG.voice_permissions || CONTEXT !== 'local' || userIsAway() || !spokenlyResponds()) return ''
   const entries = readTranscript(data.transcript_path)
   const question = PHRASE.permission.replace('{action}', describeAction(data.tool_name || '', data.tool_input))
-  withState(killReader)
+  holdReaderAfterCurrentLine()
   say(`${announcement(sessionTitle(entries, data.cwd))}${question}`)
   startDictating()
   const decision = decide(answerOf(askSpokenly(question)))
@@ -479,7 +482,7 @@ function readQuestion() {
   const entries = readTranscript(data.transcript_path)
   const questions = (data.tool_input || {}).questions || []
   // The queue stays paused: restarting it would talk over the answer being dictated.
-  withState(killReader)
+  holdReaderAfterCurrentLine()
   say(`${announcement(sessionTitle(entries, data.cwd))}${PHRASE.question} ${SILENCE} ${questions.join(' ')}`)
   startDictating()
 }
@@ -546,6 +549,17 @@ function doneDictating() {
 }
 
 function stop() {
+  withState(killReader)
+}
+
+// A question lets the line being read end first: cut mid-sentence, neither is understood.
+function holdReaderAfterCurrentLine() {
+  const readerPid = withState((state) => {
+    state.dictating_since = now() // the reader stops before its next line
+    return state.reader_pid
+  })
+  const deadline = now() + MAX_LINE_WAIT_SECONDS
+  while (isAlive(readerPid) && now() < deadline) delay(0.2)
   withState(killReader)
 }
 
