@@ -11,10 +11,9 @@ TOKEN=test-token
 export HANDFREE_STATE_DIR="$WORK/state" HANDFREE_CONFIG="$WORK/config.json" HANDFREE_SAY_LOG="$WORK/said.log"
 export HANDFREE_BRIDGE_PORT=$PORT HANDFREE_IDLE_SECONDS=0 HANDFREE_SPOKENLY_URL="http://127.0.0.1:$FAKE_SPOKENLY_PORT"
 chmod +x "$ROOT/tests/fake-say.sh"
-printf '{"say_path": "%s", "language": "fr", "pause_between_lines_seconds": 0.1, "silence_around_title_ms": 1, "bridge_token": "%s"}\n' "$ROOT/tests/fake-say.sh" "$TOKEN" > "$HANDFREE_CONFIG"
+printf '{"say_path": "%s", "language": "en", "pause_between_lines_seconds": 0.1, "silence_around_title_ms": 1, "bridge_token": "%s"}\n' "$ROOT/tests/fake-say.sh" "$TOKEN" > "$HANDFREE_CONFIG"
 FAILS=0
 
-# macOS may hand accented letters back decomposed (NFD): patterns avoid them.
 check() {
   if printf '%s' "$2" | grep -q -- "$3"; then echo "ok   $1"; else echo "FAIL $1"; echo "     expected: $3"; echo "     got: $(printf '%s' "$2" | tr '\n' '|')"; FAILS=$((FAILS + 1)); fi
 }
@@ -33,7 +32,7 @@ class H(BaseHTTPRequestHandler):
         msg = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         if msg.get("method") == "tools/call":
             time.sleep(20)
-            out = {"jsonrpc": "2.0", "id": msg["id"], "result": {"content": [{"type": "text", "text": "Q: x\nA: oui"}]}}
+            out = {"jsonrpc": "2.0", "id": msg["id"], "result": {"content": [{"type": "text", "text": "Q: x\nA: yes"}]}}
         else:
             out = {"jsonrpc": "2.0", "id": msg.get("id"), "result": {"tools": [{"name": "ask_user_dictation"}]}}
         body = json.dumps(out).encode()
@@ -48,30 +47,30 @@ sleep 1
 cloud() {  # a hook as a cloud session would run it: on Linux, hook.sh hands it to cloud-hook.py
   HANDFREE_BRIDGE_URL="http://127.0.0.1:$PORT" HANDFREE_BRIDGE_TOKEN="$TOKEN" python3 "$ROOT/bin/cloud-hook.py" "$@"
 }
-printf '{"type":"custom-title","customTitle":"Session cloud"}\n' > "$WORK/cloud.jsonl"
-printf '{"type":"user","turnOrigin":"human","message":{"content":"vas-y"}}\n' >> "$WORK/cloud.jsonl"
+printf '{"type":"custom-title","customTitle":"Cloud work"}\n' > "$WORK/cloud.jsonl"
+printf '{"type":"user","turnOrigin":"human","message":{"content":"go ahead"}}\n' >> "$WORK/cloud.jsonl"
 
-printf '{"session_id":"c","transcript_path":"%s/cloud.jsonl","last_assistant_message":"Fait depuis le cloud.\\n\\nSuite."}' "$WORK" | cloud >/dev/null
+printf '{"session_id":"c","transcript_path":"%s/cloud.jsonl","last_assistant_message":"Done from the cloud.\\n\\nMore."}' "$WORK" | cloud >/dev/null
 sleep 1.5
-check "a cloud reply is read on the Mac, with its session's title" "$(said)" "Session cloud.*Fait depuis le cloud"
-check_not "only its first paragraph" "$(said)" "Suite"
+check "a cloud reply is read on the Mac, with its session's title" "$(said)" "Session Cloud work.*Done from the cloud"
+check_not "only its first paragraph" "$(said)" "More."
 
 : > "$HANDFREE_SAY_LOG"
-printf '{"session_id":"c","transcript_path":"%s/cloud.jsonl","tool_input":{"questions":["On publie ?"]}}' "$WORK" | cloud --question >/dev/null
-check "a cloud question is read on the Mac" "$(said)" "Une question.*On publie"
+printf '{"session_id":"c","transcript_path":"%s/cloud.jsonl","tool_input":{"questions":["Publish?"]}}' "$WORK" | cloud --question >/dev/null
+check "a cloud question is read on the Mac" "$(said)" "A question.*Publish"
 osascript -l JavaScript "$ROOT/bin/handfree.js" --done >/dev/null
 
-out=$(printf '{"session_id":"c","transcript_path":"%s/cloud.jsonl","last_assistant_message":"Je pousse ?"}' "$WORK" | cloud)
+out=$(printf '{"session_id":"c","transcript_path":"%s/cloud.jsonl","last_assistant_message":"Shall I push?"}' "$WORK" | cloud)
 if grep -q '"spokenly"' "$HOME/.claude.json" 2>/dev/null; then
   check "a cloud turn ending on a written question is sent back" "$out" '"decision":"block"'
 fi
 
 rules=$(printf '{"session_id":"c"}' | cloud --session-rules)
 if grep -q '"spokenly"' "$HOME/.claude.json" 2>/dev/null; then
-  check "a cloud session receives the voice rules" "$rules" "Mode vocal actif"
+  check "a cloud session receives the voice rules" "$rules" "Voice mode is on"
 fi
 
-rules=$(printf '{"session_id":"c"}' | HANDFREE_OVERRIDES='{"language":"en","validation_word":"banana","say_path":"/bin/evil"}' cloud --session-rules)
+rules=$(printf '{"session_id":"c"}' | HANDFREE_OVERRIDES='{"validation_word":"banana","say_path":"/bin/evil"}' cloud --session-rules)
 check "a cloud environment can override safe settings" "$rules" 'saying "banana"'
 : > "$HANDFREE_SAY_LOG"
 printf '{"session_id":"c","transcript_path":"%s/cloud.jsonl","last_assistant_message":"Override."}' "$WORK" | HANDFREE_OVERRIDES='{"say_path":"/usr/bin/true"}' cloud >/dev/null; sleep 1.5

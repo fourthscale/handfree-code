@@ -4,12 +4,12 @@
 // Hooks
 //   (none)            Stop: queues the new reply (stdin)
 //   --question        PreToolUse on the Spokenly tool: pauses the queue, reads the question, then waits for the dictation
-//   --notify          Notification: queues « Claude needs your answer »
+//   --notify          Notification: queues "Claude needs your answer"
 //   --session-rules   SessionStart: prints the voice rules, refreshes the stable copy the Shortcuts call
 // Voice commands (macOS Shortcuts)
-//   --listen          « Écoute »: silence, bring the app forward, click its message field, start Spokenly
-//   --done            « Stop »: the dictation is sent, the queue goes on
-//   --stop / --resume / --restart   « Tais-toi » / « Continue » / « Recommence »
+//   --listen          "Listen": silence, bring the app forward, click its message field, start Spokenly
+//   --done            "Stop": the dictation is sent, the queue goes on
+//   --stop / --resume / --restart   "Quiet" / "Continue" / "Restart"
 //   --on / --off / --toggle         voice mode
 // Internal: --read (the reader process), --learn-prompt-path (background search of the message field)
 
@@ -31,11 +31,11 @@ const DEFAULTS = {
   say_path: '/usr/bin/say',
   pause_between_lines_seconds: 1.2, // Voice Control only matches a command spoken alone
   silence_around_title_ms: 800,
-  max_dictation_seconds: 180, // a dictation abandoned without « Stop » frees the reader after this
-  first_paragraph_only: true, // the rest waits for « Continue »
+  max_dictation_seconds: 180, // a dictation abandoned without "Stop" frees the reader after this
+  first_paragraph_only: true, // the rest waits for "Continue"
   validation_word: 'stop', // the Voice Control word that sends a dictation; Spokenly may transcribe it
   question_tool: 'mcp__spokenly__ask_user_dictation',
-  target_app: 'Claude', // the app « Écoute » brings forward
+  target_app: 'Claude', // the app "Listen" brings forward
   click_prompt: null, // null: only for the Claude desktop app; a terminal has no field to click
   prompt_name: 'Prompt', // accessibility description of the desktop app's message field
   prompt_fallback: { x_ratio: 0.6, from_bottom: 55 }, // clicked while the field's path is relearnt
@@ -522,7 +522,7 @@ function isVoiceModeOn() {
   return withState((state) => !state.voice_off)
 }
 
-// ---------- « Écoute »: focus the message field and start Spokenly
+// ---------- "Listen": focus the message field and start Spokenly
 
 const RIGHT_COMMAND = 54
 const FLAGS_CHANGED = 12
@@ -587,7 +587,7 @@ function listen() {
   }
 }
 
-// A full search of the window takes ~30 s: it runs behind, for the next « Écoute ».
+// A full search of the window takes ~30 s: it runs behind, for the next "Listen".
 function startLearningPromptPath() {
   const alreadyLearning = withState((state) => {
     if (state.learning_since && now() - state.learning_since < LEARNING_TIMEOUT_SECONDS) return true

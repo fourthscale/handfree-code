@@ -1,3 +1,3 @@
 #!/bin/sh
-# Raccourci « Tais-toi » — action « Exécuter un script shell ».
+# Shortcut "Quiet" — action "Run Shell Script".
 osascript -l JavaScript "$HOME/Library/Application Support/handfree-code/handfree.js" --stop
