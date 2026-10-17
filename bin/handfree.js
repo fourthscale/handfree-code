@@ -32,6 +32,7 @@ const DEFAULTS = {
   say_path: '/usr/bin/say',
   pause_between_lines_seconds: 1.2, // Voice Control only matches a command spoken alone
   silence_around_title_ms: 800,
+  announce_session: 'on_change', // or 'always': before every reply, question and resumed reading
   max_dictation_seconds: 180, // a dictation abandoned without "Stop" frees the reader after this
   first_paragraph_only: true, // the rest waits for "Continue"
   validation_word: 'stop', // the Voice Control word that sends a dictation; Spokenly may transcribe it
@@ -167,7 +168,7 @@ function say(text) {
 // ---------- state, shared by every process, behind a lock
 
 function emptyState() {
-  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, reader_pid: null, next_id: 0, dictating_since: null, voice_off: false, prompt_path: null, learning_since: null }
+  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, voice_off: false, prompt_path: null, learning_since: null }
 }
 
 function withState(change) {
@@ -305,6 +306,24 @@ function killReader(state) {
   state.reader_pid = null
 }
 
+// The session's name is said when the speaker changes; 'always' also says it at every reply and resumed reading.
+function announcesItem(state, item) {
+  const freshItem = state.announced_id !== item.id
+  state.announced_id = item.id
+  return speakerChanged(state, item.session) || (CONFIG.announce_session === 'always' && freshItem)
+}
+
+function speakerChanged(state, session) {
+  const changed = session !== state.last_speaker
+  state.last_speaker = session
+  return changed
+}
+
+function introFor(data, entries) {
+  const changed = withState((state) => speakerChanged(state, data.session_id))
+  return changed || CONFIG.announce_session === 'always' ? announcement(sessionTitle(entries, data.cwd)) : ''
+}
+
 function announcement(title) {
   return `${SILENCE} ${PHRASE.session.replace('{title}', title)} ${SILENCE} `
 }
@@ -315,8 +334,7 @@ function nextLineToSay(state) {
     const item = state.current
     if (item && item.position < Math.min(item.pause_at, item.lines.length)) {
       // Announced at the start of each reply and after every interruption, so chained replies stay attributable.
-      const intro = state.announced_id !== item.id ? announcement(item.title) : ''
-      state.announced_id = item.id
+      const intro = announcesItem(state, item) ? announcement(item.title) : ''
       return { id: item.id, text: intro + item.lines[item.position] }
     }
     // Stopped after the first paragraph with more to come: say so once, or the rest goes unnoticed.
@@ -464,7 +482,7 @@ function answerPermission() {
   const entries = readTranscript(data.transcript_path)
   const question = PHRASE.permission.replace('{action}', describeAction(data.tool_name || '', data.tool_input))
   holdReaderAfterCurrentLine()
-  say(`${announcement(sessionTitle(entries, data.cwd))}${question}`)
+  say(`${introFor(data, entries)}${question}`)
   startDictating()
   const decision = decide(answerOf(askSpokenly(question)))
   doneDictating()
@@ -483,7 +501,7 @@ function readQuestion() {
   const questions = (data.tool_input || {}).questions || []
   // The queue stays paused: restarting it would talk over the answer being dictated.
   holdReaderAfterCurrentLine()
-  say(`${announcement(sessionTitle(entries, data.cwd))}${PHRASE.question} ${SILENCE} ${questions.join(' ')}`)
+  say(`${introFor(data, entries)}${PHRASE.question} ${SILENCE} ${questions.join(' ')}`)
   startDictating()
 }
 

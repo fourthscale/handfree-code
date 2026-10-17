@@ -9,7 +9,7 @@ export HANDFREE_STATE_DIR="$WORK/state" HANDFREE_CONFIG="$WORK/config.json" HAND
 chmod +x "$ROOT/tests/fake-say.sh"
 FAILS=0
 
-configure() { printf '{"say_path": "%s", "language": "en", "pause_between_lines_seconds": 0.1, "silence_around_title_ms": 1%s}\n' "$ROOT/tests/fake-say.sh" "${1:-}" > "$HANDFREE_CONFIG"; }
+configure() { printf '{"say_path": "%s", "language": "en", "announce_session": "always", "pause_between_lines_seconds": 0.1, "silence_around_title_ms": 1%s}\n' "$ROOT/tests/fake-say.sh" "${1:-}" > "$HANDFREE_CONFIG"; }
 hf() { HANDFREE_IDLE_SECONDS=${HANDFREE_IDLE_SECONDS:-0} osascript -l JavaScript "$SCRIPT" "$@"; }
 transcript() { printf '{"type":"custom-title","customTitle":"%s"}\n' "$2" > "$WORK/$1.jsonl"; }
 reply() { printf '{"session_id":"%s","transcript_path":"%s/%s.jsonl","last_assistant_message":"%s"}' "$1" "$WORK" "$1" "$2" | hf >/dev/null; }
@@ -169,6 +169,20 @@ configure
 check "off by default" "[$(permission 'yes')]" "\[\]"
 kill "$SPOKENLY_PID" 2>/dev/null; wait "$SPOKENLY_PID" 2>/dev/null
 unset HANDFREE_FAKE_SAY_SECONDS
+
+# Default: the name is said only when the speaking session changes.
+printf '{"say_path": "%s", "language": "en", "pause_between_lines_seconds": 0.1, "silence_around_title_ms": 1}\n' "$ROOT/tests/fake-say.sh" > "$HANDFREE_CONFIG"
+rm -f "$HANDFREE_STATE_DIR/state.json"  # no one has spoken yet
+reset; reply a 'First.'; reply a 'Second.'; reply b 'Third.'; reply b 'Fourth.'; wait_quiet 4
+check "a session's name is said once while it keeps talking" "$(said | grep -c 'Session Project Alpha')" "^1$"
+check "and again when another session speaks" "$(said | grep -c 'Session Project Beta')" "^1$"
+reset; printf '{"session_id":"b","transcript_path":"%s/b.jsonl","tool_input":{"questions":["Same speaker?"]}}' "$WORK" | hf --question >/dev/null
+check_not "a question from the same session skips the name" "$(said)" "Session"
+hf --done >/dev/null
+reset; printf '{"session_id":"a","transcript_path":"%s/a.jsonl","tool_input":{"questions":["Other speaker?"]}}' "$WORK" | hf --question >/dev/null
+check "a question from another session says its name" "$(said)" "Session Project Alpha.*Other speaker"
+hf --done >/dev/null; wait_quiet 1
+configure
 
 printf '{"version": 0, "queue": [{"bogus": true}]}' > "$HANDFREE_STATE_DIR/state.json"
 reset; reply a 'After migration.'; wait_quiet 1.5

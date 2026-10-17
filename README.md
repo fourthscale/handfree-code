@@ -92,7 +92,7 @@ The `DictationIM.app` path may differ on other macOS versions. If a voice comman
 - **Listen** → dictate → **Stop**: the message goes to the session on screen. "Listen" brings Claude forward and puts the cursor in its field, wherever you are.
 - A question from Claude: it is read ("Session X. A question. …"), you answer, **Stop** sends. The answer always goes back to the session that asked.
 - At the end of a reply: the first paragraph is read, followed by "There is more" when text remains. **Continue** reads the rest, **Restart** reads it all again, **Quiet** cuts it (say it in a pause between two lines).
-- Several sessions: readings wait their turn, each announced by its session's name. Nothing is read while you dictate.
+- Several sessions: readings wait their turn. A session's name is said when the speaker changes, not each time the same session talks again. Nothing is read while you dictate.
 - A session started by another one does not read its reply: the one that started it relays it. If you talk to it yourself, it answers aloud.
 - **Away from the Mac** (on your phone, say): when keyboard and mouse have been idle for `away_after_idle_seconds`, the plugin refuses the Spokenly call, which would wait on a Mac you are not at, and the session asks in writing.
 - **Cloud sessions**: without the bridge, nothing is read and their questions stay written (dictating to them works: the field is on your Mac). With the bridge, everything works as locally: see *Cloud sessions: the bridge*.
@@ -161,6 +161,7 @@ All optional, in `~/.config/claude-speak.json`:
 | `first_paragraph_only` | `true` | `false` reads the whole reply right away |
 | `pause_between_lines_seconds` | `1.2` | silence between two lines, where a voice command can get through |
 | `silence_around_title_ms` | `800` | silence around the session's name |
+| `announce_session` | `on_change` | say the session's name only when the speaker changes, or `always` |
 | `max_dictation_seconds` | `180` | after a dictation abandoned without "Stop", reading resumes |
 | `question_tool` | `mcp__spokenly__ask_user_dictation` | the questions tool named in the voice rules |
 | `target_app` | `Claude` | app "Listen" brings forward; `iTerm2` or `Terminal` for Claude Code in a terminal |
