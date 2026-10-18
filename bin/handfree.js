@@ -7,7 +7,8 @@
 //   --notify          Notification: queues "Claude needs your answer"
 //   --session-rules   SessionStart: prints the voice rules, refreshes the stable copy the Shortcuts call
 //   --permission      PermissionRequest: reads the request, answers it from a spoken yes or no (voice_permissions)
-//   --answered        PostToolUse on the Spokenly tool: the answer is in, however it was sent; the queue goes on
+//   --answered        PostToolUse on the Spokenly tool: the answer is in, however it was sent; the queue goes on.
+//                     Answered "the rest": the rest of the text before the question is read, and Claude asks again
 // Voice commands (macOS Shortcuts)
 //   --listen          "Claude Listen": silence, bring the app forward, click its message field, start Spokenly
 //   --reply           "Claude Reply": the same, in the session that spoke last
@@ -723,6 +724,39 @@ function doneDictating() {
   })
 }
 
+// An answer that only asks for the rest of the text read before the question.
+const MORE_ANSWERS = ['la suite', 'suite', 'continue', 'lis la suite', 'the rest', 'more', 'go on', 'weiter', 'mehr', 'der rest']
+const ASK_AGAIN = 'The user answered that they first want to hear the rest of what you wrote before this question; it has just been read aloud to them. Ask the same question again with the same tool, without repeating that text.'
+
+function answered() {
+  const data = readStdin()
+  const words = answerOf({ result: { content: textBlocks(data.tool_response) } })
+  const wantsMore = MORE_ANSWERS.includes(words.join(' '))
+  const rest = withState((state) => {
+    const item = state.current
+    const lines = wantsMore && item && item.session === data.session_id ? item.lines.slice(item.position) : []
+    if (lines.length) Object.assign(item, { position: item.lines.length, pause_at: item.lines.length })
+    Object.assign(state, { dictating_since: null, dictating_session: null })
+    if (!lines.length) startReaderUnlessRunning(state)
+    return lines
+  })
+  if (!rest.length) return ''
+  // Read here, before Claude asks again: its new question would cut a reading still going on.
+  rest.forEach((line) => {
+    say(line)
+    delay(CONFIG.pause_between_lines_seconds)
+  })
+  return JSON.stringify({ decision: 'block', reason: ASK_AGAIN })
+}
+
+// A tool's response comes as text, a list of content blocks, or an object holding them.
+function textBlocks(value) {
+  if (typeof value === 'string') return [{ text: value }]
+  if (Array.isArray(value)) return value.flatMap(textBlocks)
+  if (value && typeof value === 'object') return typeof value.text === 'string' ? [{ text: value.text }] : textBlocks(value.content || [])
+  return []
+}
+
 function stop() {
   withState(killReader)
 }
@@ -923,7 +957,7 @@ const COMMANDS = {
   '--reply': reply,
   '--search-session': searchSession,
   '--done': doneDictating,
-  '--answered': doneDictating,
+  '--answered': answered,
   '--dictating': startDictating,
   '--stop': stop,
   '--resume': resume,

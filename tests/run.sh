@@ -92,9 +92,12 @@ printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text
 reset; printf '{"session_id":"q","transcript_path":"%s/q.jsonl","tool_input":{"questions":["Which one?"]}}' "$WORK" | hf --question >/dev/null
 check "the text before a question is read first" "$(said | tr '\n' ' ')" "Intro para.*There is more.*A question.*Which one"
 check_not "only its first paragraph" "$(said)" "More para"
-hf --resume >/dev/null; wait_quiet 1.5
-check "Continue reads the rest while the answer is awaited" "$(said)" "More para"
-printf '{"session_id":"q"}' | hf --answered >/dev/null
+out=$(printf '{"session_id":"q","tool_response":[{"type":"text","text":"Q: Which one?\\nA: La suite. Stop"}]}' | hf --answered)
+check "answering \"the rest\" reads the rest of the text" "$(said)" "More para"
+check "and has Claude ask again" "$out" '"decision":"block"'
+printf '{"session_id":"q","transcript_path":"%s/q.jsonl","tool_input":{"questions":["Which one?"]}}' "$WORK" | hf --question >/dev/null
+out=$(printf '{"session_id":"q","tool_response":{"content":[{"type":"text","text":"Q: Which one?\\nA: The second one. Stop"}]}}' | hf --answered)
+check_not "a real answer goes through" "$out" "block"
 reset; reply q 'Intro para.\n\nMore para.'; wait_quiet 1.5
 check_not "the same text is not read again at the turn's end" "$(said)" "Intro para"
 reply q 'Final words.'; wait_quiet 1.5

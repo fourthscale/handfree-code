@@ -29,7 +29,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hook.sh\" --answered"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hook.sh\" --answered",
+            "timeout": 300
           }
         ]
       }
@@ -40,7 +41,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hook.sh\" --answered"
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hook.sh\" --answered",
+            "timeout": 300
           }
         ]
       }
