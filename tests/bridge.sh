@@ -45,7 +45,7 @@ BRIDGE_PID=$!
 sleep 1
 
 cloud() {  # a hook as a cloud session would run it: on Linux, hook.sh hands it to cloud-hook.py
-  HANDFREE_BRIDGE_URL="http://127.0.0.1:$PORT" HANDFREE_BRIDGE_TOKEN="$TOKEN" python3 "$ROOT/bin/cloud-hook.py" "$@"
+  HANDFREE_BRIDGE_URL="http://127.0.0.1:$PORT" HANDFREE_BRIDGE_TOKEN="$TOKEN" HANDFREE_HOOK_LOG="$WORK/hook.log" python3 "$ROOT/bin/cloud-hook.py" "$@"
 }
 printf '{"type":"custom-title","customTitle":"Cloud work"}\n' > "$WORK/cloud.jsonl"
 printf '{"type":"user","turnOrigin":"human","message":{"content":"go ahead"}}\n' >> "$WORK/cloud.jsonl"
@@ -58,6 +58,7 @@ check_not "only its first paragraph" "$(said)" "More."
 : > "$HANDFREE_SAY_LOG"
 printf '{"session_id":"c","transcript_path":"%s/cloud.jsonl","tool_input":{"questions":["Publish?"]}}' "$WORK" | cloud --question >/dev/null
 check "a cloud question is read on the Mac" "$(said)" "A question.*Publish"
+check "each cloud hook leaves a line in its log" "$(cat "$WORK/hook.log")" "question: HTTP 200"
 printf '{"session_id":"c"}' | cloud --answered >/dev/null
 printf '{"session_id":"c","transcript_path":"%s/cloud.jsonl","last_assistant_message":"Answered."}' "$WORK" | cloud >/dev/null; sleep 1.5
 check "a cloud answer frees the queue through the bridge" "$(said)" "Answered."

@@ -317,7 +317,7 @@ The question hooks match any `mcp__…spokenly…__ask_user_dictation` tool. For
   `authValue=0` followed by `AUTHREQ_SUBJECT` names the refused program.
 - **"Shortcuts is not allowed to send keystrokes"**: remove Shortcuts from Accessibility ("−") and add it back, or run `tccutil reset Accessibility com.apple.shortcuts`.
 - **"Claude Listen" clicks the wrong place**: the field is found by its accessibility name. If the app's layout changed, a fallback point is clicked and the field is searched again in the background (about 30 s), for next time.
-- **A cloud session stays silent**: run the checks of *Check from outside*, then read the bridge's log: `tail ~/Library/Logs/handfree-bridge.log`.
+- **A cloud session stays silent**: run the checks of *Check from outside*, then read the bridge's log on the Mac (`tail ~/Library/Logs/handfree-bridge.log`) and ask the cloud session for its hooks' log (`cat /tmp/handfree-hook.log`): one line per hook, with its outcome.
 
 ## What an update can break
 

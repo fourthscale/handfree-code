@@ -3,9 +3,12 @@
 import json
 import os
 import sys
+import time
 import urllib.request
 
 TRANSCRIPT_TAIL_LINES = 400
+# One line per hook, for troubleshooting a cloud session: event, outcome, never a key or the conversation.
+LOG_PATH = os.environ.get("HANDFREE_HOOK_LOG", "/tmp/handfree-hook.log")
 TIMEOUT_SECONDS = 110  # under the PreToolUse hook's 120 s
 
 
@@ -29,17 +32,26 @@ def edge_key_header():
     return {EDGE_KEY_HEADER: key} if key else {}
 
 
+def log(command, outcome):
+    try:
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {command or 'stop'}: {outcome}\n")
+    except OSError:
+        pass
+
+
 def main():
+    command = sys.argv[1] if len(sys.argv) > 1 else ""
     url = os.environ.get("HANDFREE_BRIDGE_URL", "").rstrip("/")
     token = os.environ.get("HANDFREE_BRIDGE_TOKEN", "")
     if not url or not token:
-        return
+        return log(command, "no HANDFREE_BRIDGE_URL or HANDFREE_BRIDGE_TOKEN in the hook's environment")
     try:
         hook = json.loads(sys.stdin.read() or "{}")
     except ValueError:
         hook = {}
     payload = {
-        "command": sys.argv[1] if len(sys.argv) > 1 else "",
+        "command": command,
         "hook": hook,
         "transcript_tail": transcript_tail(hook.get("transcript_path")),
         "overrides": os.environ.get("HANDFREE_OVERRIDES", ""),
@@ -57,8 +69,11 @@ def main():
     )
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
-            sys.stdout.write(response.read().decode("utf-8"))
+            output = response.read().decode("utf-8")
+            sys.stdout.write(output)
+            log(command, f"HTTP {response.status}, {len(output)} bytes back")
     except Exception as error:  # an unreachable Mac must never break the session
+        log(command, f"failed: {type(error).__name__}: {error}")
         sys.stderr.write(f"handfree bridge unreachable: {error}\n")
 
 
