@@ -120,6 +120,11 @@ check "a one-paragraph question is read as it is" "$(said | tr '\n' ' ')" "A que
 check_not "with no rest announced" "$(said)" "Details available"
 printf '{"session_id":"k"}' | hf --answered >/dev/null
 
+# "Claude Cancel" (Escape in Spokenly): the dictation ends, nothing is sent, readings go on.
+reset; hf --dictating >/dev/null; reply b 'After the cancel.'; sleep 1
+hf --cancel >/dev/null; wait_quiet 1.5
+check "a cancelled dictation lets the readings go on" "$(said)" "After the cancel"
+
 # A dictation sent with Return (no "Stop"): the message reaching a session ends it, and readings go on.
 reset; hf --dictating >/dev/null; reply b 'Waiting for the message.'; sleep 1
 check_not "nothing is read while the dictation lasts" "$(said)" "Waiting for the message"
@@ -451,7 +456,9 @@ check "Reply too, for the session that spoke last" "$(cat "$HANDFREE_OPEN_LOG" 2
 rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Safari HANDFREE_PROMPT_REACHABLE=0 hf --listen >/dev/null; hf --done >/dev/null
 check_not "Claude out of reach (full screen elsewhere): as before" "$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)" "dictate behind"
 rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Claude HANDFREE_PROMPT_REACHABLE=1 hf --listen >/dev/null; hf --done >/dev/null
-check_not "said in Claude: as before" "$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)" "dictate behind"
+check "said in Claude: through Spokenly's window too (an Escape is seen)" "$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)" "^dictate behind -$"
+rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Claude HANDFREE_PROMPT_REACHABLE=0 hf --listen >/dev/null; hf --done >/dev/null
+check_not "the field out of reach: Spokenly types into it, as before" "$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)" "dictate behind"
 configure ', "dictate_behind": false'
 rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Safari HANDFREE_PROMPT_REACHABLE=1 hf --listen >/dev/null; hf --done >/dev/null
 check_not "dictate_behind false: as before" "$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)" "dictate behind"
@@ -470,10 +477,17 @@ check "listener: inside a sentence it does not" "$(lcheck 'je pense que claude �
 lwords() { HANDFREE_CONFIG="$HANDFREE_CONFIG" /usr/bin/python3 "$LISTENER" --check-words "$1"; }
 check "listener: a noise then a pause then the command: it counts" "$(lwords '[["[unk]",0.0,0.3],["claude",0.9,1.2],["écoute",1.2,1.6]]')" "^claude écoute$"
 check "listener: the command run into a sentence does not" "$(lwords '[["[unk]",0.0,0.3],["claude",0.35,0.6],["écoute",0.6,0.9],["[unk]",0.95,1.2]]')" "^none$"
+lfree() { /usr/bin/python3 "$LISTENER" --check-free "$1" "$2"; }
+check "listener: a command the free transcription agrees with counts" "$(lfree 'claude réponds' 'claude répond')" "^yes$"
+check "listener: refused when it was clearly other words" "$(lfree 'claude écoute' 'je vais écouter la radio')" "^no$"
+check "listener: stop needs the word itself" "$(lfree 'stop' "c'est top")" "^no$"
+check "listener: nothing transcribed keeps the command" "$(lfree 'claude chut' '')" "^yes$"
 check "listener: stop with no dictation does nothing" "$(lcheck 'stop')" "^none"
+check "listener: nor cancel" "$(lcheck 'claude annule')" "^none"
 lstate "{\"dictating_since\": $(date +%s)}"
 check "listener: during a dictation, stop sends it" "$(lcheck 'stop')" "^stop$"
 check "listener: and nothing else runs" "$(lcheck 'claude écoute')" "^none"
+check "listener: during a dictation, cancel cancels it" "$(lcheck 'claude annule')" "^cancel$"
 lstate "{\"speaker_pid\": $$, \"current\": {\"lines\": [\"Il dit claude continue ici.\"]}}"
 check "listener: while speaking, quiet works" "$(lcheck 'claude tais-toi')" "^quiet$"
 check "listener: but not listen" "$(lcheck 'claude écoute')" "^none"

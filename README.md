@@ -47,7 +47,7 @@ Then open a new session: it copies the plugin's scripts to `~/Library/Applicatio
 
 - Microphone: your headphones'.
 - Dictation shortcut: **double tap on right Command**, in toggle mode. With another shortcut, set `spokenly_trigger` to `none`.
-- Turn on **Quick send (Return key or swipe)**: the "Stop" command presses Return, which then ends the dictation, inserts the text and sends it.
+- Turn on **Quick send (Return key or swipe)**: when Claude's message field cannot be reached, Spokenly types the dictation into it, and "Stop" presses Return to end it and send it.
 - Turn off Spokenly's own "read the question aloud": the plugin already reads it.
 - Declare its MCP server in Claude Code, in `~/.claude.json` (MCP servers are not read from `settings.json`), replacing `<YOU>` with your user name:
   ```json
@@ -125,13 +125,14 @@ Check: say "Claude Listen", dictate a message, say "Stop". A short sound tells e
 | claude reply | claude réponds | claude antworten | the same, for the session that spoke last |
 | claude session | claude session | claude sitzung | opens the session search: say a session's name, then "Stop" |
 | stop | stop | stopp | sends the dictation (presses Return); does nothing when you are not dictating |
-| claude quiet | claude chut, claude tais-toi | claude ruhe | cuts the reading |
+| claude cancel | claude annule | claude abbrechen | cancels the dictation (presses Escape): nothing is sent |
+| claude quiet | claude silence, claude chut | claude ruhe | cuts the reading |
 | claude continue | claude continue | claude weiter | reads the rest of the reply |
 | claude restart | claude recommence | claude neu | reads the reply again from the start |
 | claude voice mode on | claude mode vocal activé | claude sprachmodus an | turns voice mode on |
 | claude voice mode off | claude mode vocal désactivé | claude sprachmodus aus | turns everything off, listening included |
 
-Say a command on its own, a short pause before and after; a command inside a sentence does nothing. What is listened for follows what happens: while you dictate, only "Stop"; while Claude speaks, only "Quiet", "Continue" and "Restart". **The phrases are yours to choose**, several per command if you like, in `~/.config/claude-speak.json`; the listener restarts with each new session, or run the `launchctl kickstart` above:
+Say a command on its own, a short pause before and after; a command inside a sentence does nothing. A second, free transcription of the same audio checks each command: one it heard as other words (a video, a sentence of yours) is refused. "Stop" sends once a second of silence follows it, so a "stop" inside your sentence does not cut you short. What is listened for follows what happens: while you dictate, only "Stop" and "Cancel"; while Claude speaks, only "Quiet", "Continue" and "Restart". **The phrases are yours to choose**, several per command if you like, in `~/.config/claude-speak.json`; the listener restarts with each new session, or run the `launchctl kickstart` above:
 
 ```json
 {
@@ -146,7 +147,7 @@ Say a command on its own, a short pause before and after; a command inside a sen
 
 ## Usage
 
-- **Claude Listen** → dictate → **Stop**: the message goes to the session on screen, wherever you were. **Said in another app**, with Claude in a normal window (not full screen): Claude stays behind. Spokenly records in its own window, then the text is put in Claude's field and sent; you never leave your app. `"dictate_behind": false` turns this off. With Claude in full screen, or when its field cannot be reached, Claude comes forward for the dictation instead; once the message has left (Spokenly inserts and sends it only while Claude is in front), you are back in the app you said it in (your browser, say). No message within 30 s, a cloud session for instance: Claude stays on screen. Said in Claude, you stay in Claude. **Claude Reply** does the same, and so does **Claude Session** followed by **Claude Listen**. `"return_to_previous_app": false` leaves Claude on screen.
+- **Claude Listen** → dictate → **Stop**: the message goes to the session on screen, wherever you were. You dictate in Spokenly's own window, and the plugin puts the text in Claude's field and sends it; **Escape** in Spokenly cancels cleanly (nothing sent, the readings and the music resume, you are back in your app). **Said in another app**, with Claude in a normal window (not full screen): Claude stays behind. Spokenly records in its own window, then the text is put in Claude's field and sent; you never leave your app. `"dictate_behind": false` turns this off. With Claude in full screen, or when its field cannot be reached, Claude comes forward for the dictation instead; once the message has left (Spokenly inserts and sends it only while Claude is in front), you are back in the app you said it in (your browser, say). No message within 30 s, a cloud session for instance: Claude stays on screen. Said in Claude, you stay in Claude. **Claude Reply** does the same, and so does **Claude Session** followed by **Claude Listen**. `"return_to_previous_app": false` leaves Claude on screen.
 - **Claude Reply** → dictate → **Stop**: the message goes to the session that spoke last, even if another one is on screen (it is opened only then). A cloud session cannot be opened this way: the session on screen gets it.
 - **Claude Session** → say a session's name → **Stop**: that session opens. Then **Claude Listen**.
 - **A question**: Claude writes its reply in full, the question last, and ends its turn; it is then asked to put the question alone to Spokenly. The reply stays on screen and its first paragraph is read first, then "Details available" if text remains, then the question ("A question. …"). For a long reply, its first paragraph is its summary (see *A reply*); if it is not, Claude adds a two- or three-sentence summary to the question, read right after it. "The rest" or "the details" read the reply in full. The voice rules ask for that order because text written just before a tool call may be hidden in the app. You answer, **Stop** or Enter sends; the answer goes back to the session that asked. To hear the rest of that text first, answer "the rest" ("la suite", "der Rest"): a long rest comes as a summary Claude writes, read before the question asked again; answer "the details" ("le détail", "die Details") to hear the full text, then Claude asks once more. A short rest is read as it is. `"summarize_rest": false` reads the full rest straight away.

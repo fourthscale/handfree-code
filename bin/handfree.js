@@ -16,6 +16,7 @@
 //   --reply           "Claude Reply": the same, in the session that spoke last
 //   --search-session  "Claude Session": open the app's session search and start Spokenly; "Stop" opens the one named
 //   --done            "Stop": the dictation is sent, the queue goes on
+//   --cancel          "Claude Cancel": Escape was pressed in Spokenly; a free dictation ends, nothing is sent
 //   --stop / --resume / --restart   "Claude Quiet" / "Claude Continue" / "Claude Restart"
 //   --on / --off      "Claude Voice mode on" / "Claude Voice mode off" (--toggle: /vocal with no argument)
 // Internal: --read (the reader process), --learn-prompt-path (background search of the message field),
@@ -928,6 +929,20 @@ function promptSent() {
   })
 }
 
+// "Claude Cancel": the listener pressed Escape, which cancels Spokenly. A free dictation ends here, and the app it was
+// said in comes back; a question's ends with its answer (Spokenly reports it skipped).
+function cancelDictation() {
+  const back = withState((state) => {
+    if (!isDictating(state) || state.dictating_session) return null
+    state.dictating_since = null
+    startReaderUnlessRunning(state)
+    const previous = state.return_app
+    if (previous && previous.armed) state.return_app = null
+    return previous && previous.armed ? previous.bundle : null
+  })
+  if (back && (frontApp() || {}).name === CONFIG.target_app) bringBack(back)
+}
+
 // "Stop" ends a free dictation. A question's dictation (it has a session) is freed by its answer instead: that comes
 // later, after "the rest" may have the question asked again, and a reading started meanwhile would be taken down.
 function doneDictating() {
@@ -1197,11 +1212,17 @@ function listen() {
   dictateInTargetApp()
 }
 
+// Claude in front: the dictation goes through Spokenly's window too, which tells an Escape apart (the plugin then frees
+// the readings, the music, the app to go back to). Spokenly typing into the field is kept for when the field cannot be
+// reached, and with dictate_behind off.
 function dictateInTargetApp() {
   startDictating()
+  if (!ENV.HANDFREE_OPEN_LOG) {
+    Application(CONFIG.target_app).activate()
+    delay(CONFIG.activate_delay_seconds)
+  }
+  if (CONFIG.dictate_behind && CONFIG.target_app === 'Claude' && promptReachable()) return spawnDictation('-')
   if (ENV.HANDFREE_OPEN_LOG) return // tests: no window, click or key
-  Application(CONFIG.target_app).activate()
-  delay(CONFIG.activate_delay_seconds)
   const shouldClick = CONFIG.click_prompt === null ? CONFIG.target_app === 'Claude' : CONFIG.click_prompt
   if (shouldClick) {
     clickPrompt()
@@ -1266,10 +1287,14 @@ function canDictateBehind() {
   if (!CONFIG.dictate_behind || CONFIG.target_app !== 'Claude') return false
   const front = frontApp()
   if (!front || front.name === CONFIG.target_app) return false
-  if (ENV.HANDFREE_PROMPT_REACHABLE !== undefined) return ENV.HANDFREE_PROMPT_REACHABLE === '1'
-  if (reachablePrompt()) return true
+  if (promptReachable()) return true
   logDictation(`as before: Claude's field out of reach from ${front.name} (full screen, or its path changed)`)
   return false
+}
+
+function promptReachable() {
+  if (ENV.HANDFREE_PROMPT_REACHABLE !== undefined) return ENV.HANDFREE_PROMPT_REACHABLE === '1'
+  return Boolean(reachablePrompt())
 }
 
 function reachablePrompt() {
@@ -1285,6 +1310,10 @@ function reachablePrompt() {
 // The command returns at once: the dictation runs in its own process, so "Stop" can be said while it waits.
 function startDictatingBehind(session) {
   startDictating()
+  spawnDictation(session)
+}
+
+function spawnDictation(session) {
   if (ENV.HANDFREE_OPEN_LOG) return writeFile(ENV.HANDFREE_OPEN_LOG, (readFile(ENV.HANDFREE_OPEN_LOG) || '') + `dictate behind ${session || '-'}\n`)
   shell(`osascript -l JavaScript ${quote(scriptPath())} --dictate-behind ${quote(session || '-')} >/dev/null 2>&1 &`)
 }
@@ -1315,11 +1344,22 @@ function dictateBehind([session]) {
     state.dictating_session = null
     startReaderUnlessRunning(state)
   })
-  if (!text) return
+  if (!text) return cancelled()
   if (sendBehind(text)) return
   // Not sent: the text waits in Claude's field, in front, to be sent by hand.
   Application(CONFIG.target_app).activate()
   say(PHRASE.not_sent)
+}
+
+// Escape in Spokenly, or nothing said: nothing is sent, and the app "Listen" was said in comes back if Claude came forward.
+function cancelled() {
+  const back = withState((state) => {
+    const previous = state.return_app
+    if (previous && previous.armed) state.return_app = null
+    return previous && previous.armed ? previous.bundle : null
+  })
+  logDictation('cancelled: nothing sent')
+  if (back && (frontApp() || {}).name === CONFIG.target_app) bringBack(back)
 }
 
 function dictatedText(spokenlyReply) {
@@ -1505,6 +1545,7 @@ const COMMANDS = {
   '--reply': reply,
   '--search-session': searchSession,
   '--done': doneDictating,
+  '--cancel': cancelDictation,
   '--answered': answered,
   '--prompt-sent': promptSent,
   '--dictating': startDictating,
