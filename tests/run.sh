@@ -120,6 +120,12 @@ check "a one-paragraph question is read as it is" "$(said | tr '\n' ' ')" "A que
 check_not "with no rest announced" "$(said)" "Details available"
 printf '{"session_id":"k"}' | hf --answered >/dev/null
 
+# A dictation sent with Return (no "Stop"): the message reaching a session ends it, and readings go on.
+reset; hf --dictating >/dev/null; reply b 'Waiting for the message.'; sleep 1
+check_not "nothing is read while the dictation lasts" "$(said)" "Waiting for the message"
+printf '{"session_id":"b","prompt":"Sent with Return."}' | hf --prompt-sent >/dev/null; wait_quiet 1.5
+check "a message sent ends the dictation, the reply is read" "$(said)" "Waiting for the message"
+
 # A dictation under way ("Listen") is not freed by another session's question failing or being answered.
 reset; hf --dictating >/dev/null
 printf '{"session_id":"x","tool_response":[{"type":"text","text":"Already recording"}]}' | hf --answered >/dev/null
@@ -345,6 +351,13 @@ check "music playing: paused before speaking, resumed after" "$(cat "$HANDFREE_M
 rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
 HANDFREE_AUDIO_PLAYING=1 hf --dictating >/dev/null; HANDFREE_AUDIO_PLAYING=0 hf --done >/dev/null; wait_quiet 1.5
 check "a dictation pauses the music, Stop resumes it" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^pause play $"
+# A dictation sent with Return, not "Stop": it runs out, and the music the user resumed meanwhile is paused again.
+configure ', "max_dictation_seconds": 1'; rm -f "$HANDFREE_MEDIA_KEY_LOG"
+HANDFREE_NOW_PLAYING=1 hf --dictating >/dev/null; sleep 1.5
+HANDFREE_NOW_PLAYING=1 reply b 'Music resumed by hand meanwhile.'; sleep 1
+check "music resumed by hand after a dictation is paused again for a reading" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^pause pause"
+wait_quiet 2; configure
+rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
 rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
 HANDFREE_AUDIO_PLAYING=0 reply a 'In silence.'; wait_quiet 2
 check "nothing playing: nothing is sent" "[$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null)]" "\[\]"

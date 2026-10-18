@@ -8,6 +8,7 @@
 //   --session-rules   SessionStart: prints the voice rules, refreshes the stable copy the listener and bridge run
 //   --guard-question  PreToolUse on AskUserQuestion and the app's session offer: sends Claude to Spokenly instead
 //   --permission      PermissionRequest: reads the request, answers it from a spoken yes or no (voice_permissions)
+//   --prompt-sent     UserPromptSubmit: a message sent (Return, a click) ends a free dictation that "Stop" did not
 //   --answered        PostToolUse on the Spokenly tool: the answer is in, however it was sent; the queue goes on.
 //                     Answered "the rest": the rest of the text before the question is read, and Claude asks again
 // Spoken commands (bin/listener.py runs them)
@@ -291,10 +292,13 @@ function mediaIsPlaying(state) {
 }
 
 // Paused only when something plays, never on a doubt: resuming afterwards must not start what the user had stopped.
+// Paused by us but playing again (resumed by hand after a dictation sent with Return, say): pause it again. Only when the
+// Now Playing app answers; the audio-signal fallback cannot tell our own voice from music.
 function pauseMediaIfPlaying() {
   if (!CONFIG.pause_media) return
   withState((state) => {
-    if (state.media_paused || !mediaIsPlaying(state)) return
+    const playing = state.media_paused ? nowPlayingIsPlaying() === true : mediaIsPlaying(state)
+    if (!playing) return
     sendMediaCommand('pause')
     state.media_paused = true
   })
@@ -913,6 +917,17 @@ function startDictating(session) {
   })
 }
 
+// A message sent to a session, however it was sent, ends a free dictation ("Listen") that no "Stop" ended: sent with
+// Return, it would otherwise hold the readings until max_dictation_seconds. A question's dictation waits for its answer.
+function promptSent() {
+  readStdin()
+  withState((state) => {
+    if (!isDictating(state) || state.dictating_session) return
+    state.dictating_since = null
+    startReaderUnlessRunning(state)
+  })
+}
+
 // "Stop" ends a free dictation. A question's dictation (it has a session) is freed by its answer instead: that comes
 // later, after "the rest" may have the question asked again, and a reading started meanwhile would be taken down.
 function doneDictating() {
@@ -1491,6 +1506,7 @@ const COMMANDS = {
   '--search-session': searchSession,
   '--done': doneDictating,
   '--answered': answered,
+  '--prompt-sent': promptSent,
   '--dictating': startDictating,
   '--stop': stop,
   '--resume': resume,
@@ -1504,7 +1520,7 @@ const COMMANDS = {
   '--guard-question': guardScreenOnlyQuestion,
   '--dictate-behind': dictateBehind,
 }
-const SILENT_WHEN_OFF = ['', '--question', '--guard-question', '--notify', '--session-rules', '--listen', '--reply', '--search-session', '--permission']
+const SILENT_WHEN_OFF = ['', '--prompt-sent', '--question', '--guard-question', '--notify', '--session-rules', '--listen', '--reply', '--search-session', '--permission']
 
 function run(argv) {
   const command = argv[0] || ''

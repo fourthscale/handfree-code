@@ -20,7 +20,7 @@ CONFIG_PATH = os.environ.get("HANDFREE_CONFIG") or os.path.expanduser("~/.config
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "handfree.js")
 LOG_PATH = os.path.expanduser("~/Library/Logs/handfree-bridge.log")  # where its service sends stderr (install-bridge.sh)
 SPOKENLY_URL = os.environ.get("HANDFREE_SPOKENLY_URL", "http://localhost:51089")
-HOOK_COMMANDS = {"", "--question", "--guard-question", "--answered", "--notify", "--session-rules"}
+HOOK_COMMANDS = {"", "--question", "--guard-question", "--answered", "--prompt-sent", "--notify", "--session-rules"}
 HOOK_TIMEOUT_SECONDS = 110
 SPOKENLY_TIMEOUT_SECONDS = 900
 # Cloudflare drops a request whose origin stays silent for 100 s; a dictation can last longer.

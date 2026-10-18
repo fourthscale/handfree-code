@@ -48,7 +48,7 @@ Settings come from `~/.config/claude-speak.json`, with defaults in `CONFIG` at t
 
 ## One voice at a time
 
-Every line is said under a speech lock (`speech.lock` in the state folder), whichever process says it: the reader, a question, "the rest". A line cut short (Quiet, a question) frees it.
+Music or a video playing is paused while the plugin speaks and while you dictate, then resumed; paused by us but playing again (resumed by hand), it is paused again. Every line is said under a speech lock (`speech.lock` in the state folder), whichever process says it: the reader, a question, "the rest". A line cut short (Quiet, a question) frees it.
 
 ## Questions
 
@@ -79,7 +79,7 @@ Spokenly may hand accents decomposed (NFD): answers are normalized before they a
 What each command then does:
 
 - **"Claude Listen"** (`--listen`): stops the reading, brings Claude forward, clicks its message field (found by its accessibility path, learnt in the background when the layout changes) and starts Spokenly with a double tap on right Command.
-- **"Stop"** presses Return, which in Spokenly's Quick Send mode inserts the transcript and sends it, then runs `--done`: a free dictation ends there; a question's is freed by its answer instead.
+- **"Stop"** presses Return, which in Spokenly's Quick Send mode inserts the transcript and sends it, then runs `--done`: a free dictation ends there; a question's is freed by its answer instead. A message sent any other way (Return typed, a click) ends a free dictation too: `UserPromptSubmit` runs `--prompt-sent`.
 - **Going back.** If "Listen" was said in another app, that app is noted (`return_app`). After "Stop", a background process (`--go-back`) waits until the message has left, then brings that app back. Spokenly inserts and sends only while Claude is in front, so going back earlier would lose the message. "Left" means Claude Code wrote a `queue-operation` `enqueue` entry to a local transcript after the "Stop"; it does this whether the session is at rest or working. No such entry within 30 s, for a cloud session say: Claude stays in front.
 - **Claude left behind** (`dictate_behind`). Said in another app, with Claude's message field reachable through accessibility (its stored path still valid, and a window to see: Claude in full screen shows none to another Space), "Listen" and "Reply" start `--dictate-behind` in the background. "Reply" first opens its session through its link; the app comes forward on its links even with `open -g`, so the app it was said in is brought back at once (Claude shows for a moment), and only if that fails does the usual way take over. Spokenly records in its own window (its HTTP API, as for permissions) and returns the text; the plugin gives the field the focus, sets its value, waits for the "Send" button (it shows once the app has taken the text in, about a second later) and presses it. Sent means a `queue-operation` entry, or, for a cloud session, an empty field; otherwise Claude comes forward with the text waiting and "Message not sent" is said. Accessibility reads lag behind the app by about a second.
 - **"Claude Reply"** first checks which session the app shows (the session file with the latest `lastFocusedAt`); when it is already the one that spoke last, nothing is opened. Otherwise it opens the session that spoke last through the app's link (`claude://code/continue?session=local_…`, found in the app's session files), then does what "Listen" does. **"Claude Session"** opens the app's search.
