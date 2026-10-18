@@ -268,7 +268,7 @@ function sendMediaCommand(name) {
 // ---------- state, shared by every process, behind a lock
 
 function emptyState() {
-  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, voice_off: false, prompt_path: null, learning_since: null, media_paused: false, last_speech_end: 0, speaker_pid: null }
+  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, dictating_session: null, voice_off: false, prompt_path: null, learning_since: null, media_paused: false, last_speech_end: 0, speaker_pid: null }
 }
 
 function withState(change) {
@@ -472,6 +472,8 @@ function readQueue() {
 function enqueue(data, entries, lines, pauseAt) {
   const title = sessionTitle(entries, data.cwd)
   withState((state) => {
+    // The session that asked a question ends its turn: the question is over, even refused before it ran.
+    if (state.dictating_session && state.dictating_session === data.session_id) Object.assign(state, { dictating_since: null, dictating_session: null })
     state.queue.push({ id: state.next_id, session: data.session_id, title, lines, position: 0, pause_at: pauseAt })
     state.next_id += 1
     startReaderUnlessRunning(state)
@@ -608,7 +610,7 @@ function readQuestion() {
   // The queue stays paused: restarting it would talk over the answer being dictated.
   holdReaderAfterCurrentLine()
   say(`${introFor(data, entries)}${PHRASE.question} ${SILENCE} ${questions.join(' ')}`)
-  startDictating()
+  startDictating(data.session_id)
 }
 
 function printSessionRules() {
@@ -658,16 +660,19 @@ function scriptPath() {
 
 // ---------- voice commands
 
-function startDictating() {
+// A question records the session that asked; "Listen" records none.
+function startDictating(session) {
   withState((state) => {
     killReader(state)
     state.dictating_since = now()
+    state.dictating_session = session || null
   })
 }
 
 function doneDictating() {
   withState((state) => {
     state.dictating_since = null
+    state.dictating_session = null
     startReaderUnlessRunning(state)
   })
 }

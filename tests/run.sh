@@ -80,6 +80,12 @@ reply b 'Answer to the second.'; wait_quiet 1.5
 check_not "the next session's reply is read alone" "$(said)" "Answer to the first"
 check "and read at once" "$(said)" "Answer to the second"
 
+reset; printf '{"session_id":"b","transcript_path":"%s/b.jsonl","tool_input":{"questions":["Refused?"]}}' "$WORK" | hf --question >/dev/null
+reply a 'Another session meanwhile.'; sleep 1
+check_not "another session's turn end does not cut a question short" "$(said)" "Another session meanwhile"
+reply b 'Question refused, turn over.'; wait_quiet 2.5
+check "the asking session's turn end frees the reading, though no answer came" "$(said)" "Question refused, turn over"
+
 reset; printf '{"type":"user","turnOrigin":"sdk","message":{"content":"Background (from the session that started this one): x"}}\n' >> "$WORK/b.jsonl"
 reply b 'Delegated task.'; sleep 1
 check_not "a turn delegated by another session is not read" "$(said)" "Delegated task"
