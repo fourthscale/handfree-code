@@ -122,7 +122,15 @@ One shortcut per file of [`shortcuts/`](shortcuts), with the file's content past
 
 ### 6. Voice commands
 
-System Settings > Accessibility > Voice Control: turn it on, with the **Mac's** microphone. Then Commands… > "+", for each command: "While using: Any Application", "Perform: Run Shortcut".
+System Settings > Accessibility > Voice Control: turn it on, with the **Mac's** microphone, and set its language. Then create the commands with one script, Voice Control turned **off** while it runs:
+
+```bash
+/usr/bin/python3 handfree-code/bin/install-voice-commands.py
+```
+
+It adds one command per shortcut in Voice Control's language (French, English or German), saves your commands first, and points a command whose phrase already exists at the new shortcut instead of doubling it. `--dry-run` shows what it would do. Turn Voice Control back on afterwards.
+
+Or by hand: Commands… > "+", for each command: "While using: Any Application", "Perform: Run Shortcut".
 
 | You say | Shortcut | What it does |
 |---|---|---|
