@@ -202,21 +202,20 @@ Another tunnel (ngrok, Tailscale Funnel…) works too, as long as its address is
 
 ### 3. The Cloudflare rules
 
-Cloudflare dashboard > your domain > Security > WAF > **Custom rules**, in this order (use "Edit expression"):
+Cloudflare dashboard > your domain > Security > WAF > **Custom rules**, in this order ("Edit expression" to paste):
 
 1. **Block requests without the key**: action *Block*.
    ```
    (http.host eq "<HOSTNAME>" and not any(http.request.headers["x-handfree-key"][*] eq "<BRIDGE-EDGE-KEY>"))
    ```
    Nothing without the key reaches your Mac.
-2. **Let the bridge through the bot protections**: action *Skip*, ticking all remaining custom rules, the managed rules and Super Bot Fight Mode.
+2. **Let requests with the key through**: action *Skip*.
    ```
-   (http.host eq "<HOSTNAME>")
+   (http.host eq "<HOSTNAME>" and any(http.request.headers["x-handfree-key"][*] eq "<BRIDGE-EDGE-KEY>"))
    ```
+   Tick: all remaining custom rules, **all managed rules**, Super Bot Fight Mode, and under "More components to skip": Browser Integrity Check and Security Level.
 
-Then Rules > **Configuration Rules**, for `http.host eq "<HOSTNAME>"`: Security Level *Essentially Off*, Browser Integrity Check *Off*. Otherwise a challenge page answers the cloud session instead of your Mac.
-
-The free plan's Bot Fight Mode cannot be skipped by a rule: if it blocks the bridge, turn it off for the domain.
+The managed rules matter most: they read the commands and paths of a conversation as an attack, and answer 403 to every hook but the first. The free plan's Bot Fight Mode cannot be skipped by a rule: if it blocks the bridge, turn it off for the domain.
 
 ### 4. Check from outside
 
