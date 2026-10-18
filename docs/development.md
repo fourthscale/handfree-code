@@ -70,5 +70,6 @@ After changing a script in `shortcuts/`, rebuild the importable files with `pyth
 ## Debugging
 
 - **What was said**: nothing is logged on the Mac; the state file (`~/Library/Caches/claude-speak/state.json`) shows the queue, the reader and any dictation under way.
+- **Dictating with Claude behind**: set `"dictation_log": true`, then read `~/Library/Caches/claude-speak/dictate-behind.log` (each step, and why the usual way was taken).
 - **Cloud sessions**: `/tmp/handfree-hook.log` in the cloud session (one line per hook) and `~/Library/Logs/handfree-bridge.log` on the Mac.
 - **A voice command that does nothing**: usually an Accessibility permission; see the README's *Troubleshooting*.

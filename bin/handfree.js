@@ -50,6 +50,8 @@ const DEFAULTS = {
   validation_word: 'stop', // the Voice Control word that sends a dictation; Spokenly may transcribe it
   question_tool: 'mcp__spokenly__ask_user_dictation',
   target_app: 'Claude', // the app "Listen" brings forward
+  dictate_behind: true, // said in another app, Claude stays behind: Spokenly records, the text is sent through accessibility
+  dictation_log: false, // true: how each dictation with Claude behind went, in the state folder's dictate-behind.log
   return_to_previous_app: true, // after "Stop", back to the app "Listen" was said in (none if it was already target_app)
   click_prompt: null, // null: only for the Claude desktop app; a terminal has no field to click
   prompt_name: 'Prompt', // accessibility description of the desktop app's message field
@@ -70,9 +72,9 @@ const DEFAULTS = {
 }
 
 const PHRASES = {
-  fr: { session: 'Session {title}.', question: 'Une question.', link: 'lien', code: 'Bloc de code omis.', more: 'Détail disponible.', detail: 'Pour tout entendre, réponds « le détail ».', voice_on: 'Mode vocal activé.', voice_off: 'Mode vocal désactivé.', permission: 'Autorisation demandée : {action}. Autoriser ?', idle: "Claude t'attend", waiting: 'Claude attend ta réponse' },
-  en: { session: 'Session {title}.', question: 'A question.', link: 'link', code: 'Code block skipped.', more: 'Details available.', detail: 'To hear it all, answer "the details".', voice_on: 'Voice mode on.', voice_off: 'Voice mode off.', permission: 'Permission requested: {action}. Allow?', idle: 'Claude is waiting', waiting: 'Claude needs your answer' },
-  de: { session: 'Sitzung {title}.', question: 'Eine Frage.', link: 'Link', code: 'Codeblock ausgelassen.', more: 'Details verfügbar.', detail: 'Um alles zu hören, antworte „die Details“.', voice_on: 'Sprachmodus an.', voice_off: 'Sprachmodus aus.', permission: 'Erlaubnis angefragt: {action}. Erlauben?', idle: 'Claude wartet', waiting: 'Claude wartet auf deine Antwort' },
+  fr: { session: 'Session {title}.', question: 'Une question.', link: 'lien', code: 'Bloc de code omis.', more: 'Détail disponible.', detail: 'Pour tout entendre, réponds « le détail ».', dictate: 'Ton message pour Claude.', not_sent: 'Message pas envoyé : il attend dans Claude.', voice_on: 'Mode vocal activé.', voice_off: 'Mode vocal désactivé.', permission: 'Autorisation demandée : {action}. Autoriser ?', idle: "Claude t'attend", waiting: 'Claude attend ta réponse' },
+  en: { session: 'Session {title}.', question: 'A question.', link: 'link', code: 'Code block skipped.', more: 'Details available.', detail: 'To hear it all, answer "the details".', dictate: 'Your message for Claude.', not_sent: 'Message not sent: it is waiting in Claude.', voice_on: 'Voice mode on.', voice_off: 'Voice mode off.', permission: 'Permission requested: {action}. Allow?', idle: 'Claude is waiting', waiting: 'Claude needs your answer' },
+  de: { session: 'Sitzung {title}.', question: 'Eine Frage.', link: 'Link', code: 'Codeblock ausgelassen.', more: 'Details verfügbar.', detail: 'Um alles zu hören, antworte „die Details“.', dictate: 'Deine Nachricht an Claude.', not_sent: 'Nachricht nicht gesendet: sie wartet in Claude.', voice_on: 'Sprachmodus an.', voice_off: 'Sprachmodus aus.', permission: 'Erlaubnis angefragt: {action}. Erlauben?', idle: 'Claude wartet', waiting: 'Claude wartet auf deine Antwort' },
 }
 
 const SESSION_RULES = {
@@ -98,6 +100,9 @@ const SESSION_RULES = {
 
 const DELEGATED_TURN_ORIGINS = ['sdk', 'peer'] // an unknown value, after a Claude Code update, reads the reply
 const LEARNING_TIMEOUT_SECONDS = 120
+const RETURN_KEY = 36
+const SEND_WAIT_SECONDS = 5 // for the app to take the text in, then to send it
+const SEND_BUTTON = /^(envoyer|send|senden|absenden)\b/i
 const RETURN_WAIT_SECONDS = 30 // for the dictated message to be sent before going back
 const RETURN_APP_KEPT_SECONDS = 300 // a session search abandoned long ago does not decide where "Stop" goes
 const MAX_READING_WAIT_SECONDS = 60 // the question hook has 120 s in all, its own reading included
@@ -627,10 +632,10 @@ function decide(words) {
   return null
 }
 
-function askSpokenly(question) {
+function askSpokenly(question, seconds) {
   const url = ENV.HANDFREE_SPOKENLY_URL || 'http://localhost:51089'
   const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'ask_user_dictation', arguments: { questions: [question] } } }
-  const output = shell(`curl -s -m ${Math.round(CONFIG.permission_answer_seconds)} -X POST ${quote(url)} -H 'Content-Type: application/json' -d ${quote(JSON.stringify(call))}`)
+  const output = shell(`curl -s -m ${Math.round(seconds || CONFIG.permission_answer_seconds)} -X POST ${quote(url)} -H 'Content-Type: application/json' -d ${quote(JSON.stringify(call))}`)
   try {
     return JSON.parse(output)
   } catch (e) {
@@ -1030,11 +1035,20 @@ function tapRightCommand() {
   $.CGEventPost(0, up)
 }
 
-function promptCenter(win, path) {
+function promptAt(win, path) {
   try {
     let element = win
     for (const i of path) element = element.uiElements[i]
-    if (element.description() !== CONFIG.prompt_name) return null
+    return element.description() === CONFIG.prompt_name ? element : null
+  } catch (e) {
+    return null
+  }
+}
+
+function promptCenter(win, path) {
+  try {
+    const element = promptAt(win, path)
+    if (!element) return null
     const [x, y] = element.position()
     const [w, h] = element.size()
     return [x + w / 2, y + h / 2]
@@ -1056,6 +1070,7 @@ function clickPrompt() {
 
 function listen() {
   rememberFrontApp(true)
+  if (canDictateBehind()) return startDictatingBehind(null)
   dictateInTargetApp()
 }
 
@@ -1080,26 +1095,228 @@ function startSpokenly() {
 }
 
 // The app's links name a session by its own id (local_…); hooks know the Claude Code one, which the app's file records.
+// The app records when each session was last shown (`lastFocusedAt`): the latest is the one in its window.
+function appSessionOnScreen() {
+  let latest = { at: 0, id: null }
+  for (const file of shell(`find ${quote(APP_SESSIONS_DIR)} -name 'local_*.json' 2>/dev/null`).split(/\r\n?|\n/).filter(Boolean)) {
+    try {
+      const session = JSON.parse(readFile(file))
+      const at = Number(session.lastFocusedAt) || 0
+      if (at > latest.at) latest = { at, id: session.sessionId }
+    } catch (e) {}
+  }
+  return latest.id
+}
+
 function appSessionId(sessionId) {
   if (!/^[0-9a-f-]{36}$/.test(sessionId || '')) return null
   const file = shell(`grep -rlF --include='local_*.json' ${quote(sessionId)} ${quote(APP_SESSIONS_DIR)} | head -1`)
   return (file.match(/(local_[A-Za-z0-9-]+)\.json$/) || [])[1] || null
 }
 
-function openAppLink(url) {
+// `behind`: the app is asked to stay where it is (open -g); it may still come forward.
+function openAppLink(url, behind) {
   if (ENV.HANDFREE_OPEN_LOG) return writeFile(ENV.HANDFREE_OPEN_LOG, (readFile(ENV.HANDFREE_OPEN_LOG) || '') + url + '\n')
-  shell(`open ${quote(url)}`)
+  shell(`open ${behind ? '-g ' : ''}${quote(url)}`)
 }
 
 // A cloud session, or one the app does not show, has no link: the session on screen is the one dictated to.
 function reply() {
   rememberFrontApp(true)
-  const session = appSessionId(withState((state) => state.last_speaker))
+  const speaker = appSessionId(withState((state) => state.last_speaker))
+  // Already on screen: nothing to open, so nothing comes forward.
+  const session = speaker && speaker !== appSessionOnScreen() ? speaker : null
+  if (canDictateBehind()) return startDictatingBehind(session)
   if (session) {
     openAppLink(`claude://code/continue?session=${session}`)
     if (!ENV.HANDFREE_OPEN_LOG) delay(CONFIG.open_session_delay_seconds)
   }
   dictateInTargetApp()
+}
+
+// ---------- dictating with Claude left behind
+
+// Said in another app, "Listen" and "Reply" leave Claude where it is: Spokenly records in its own window, then the text
+// is put in Claude's message field and sent through accessibility. Claude in full screen shows no window to another
+// Space, a terminal has no such field, the field's path may be stale: then Claude comes forward as before.
+function canDictateBehind() {
+  if (!CONFIG.dictate_behind || CONFIG.target_app !== 'Claude') return false
+  const front = frontApp()
+  if (!front || front.name === CONFIG.target_app) return false
+  if (ENV.HANDFREE_PROMPT_REACHABLE !== undefined) return ENV.HANDFREE_PROMPT_REACHABLE === '1'
+  if (reachablePrompt()) return true
+  logDictation(`as before: Claude's field out of reach from ${front.name} (full screen, or its path changed)`)
+  return false
+}
+
+function reachablePrompt() {
+  try {
+    const process = Application('System Events').processes.byName(CONFIG.target_app)
+    if (!process.windows().length) return null
+    return promptAt(process.windows[0], withState((state) => state.prompt_path) || [])
+  } catch (e) {
+    return null
+  }
+}
+
+// The Shortcut returns at once: the dictation runs in its own process, so "Stop" can be said while it waits.
+function startDictatingBehind(session) {
+  startDictating()
+  if (ENV.HANDFREE_OPEN_LOG) return writeFile(ENV.HANDFREE_OPEN_LOG, (readFile(ENV.HANDFREE_OPEN_LOG) || '') + `dictate behind ${session || '-'}\n`)
+  shell(`osascript -l JavaScript ${quote(scriptPath())} --dictate-behind ${quote(session || '-')} >/dev/null 2>&1 &`)
+}
+
+function dictateBehind([session]) {
+  if (session && session !== '-') {
+    openAppLink(`claude://code/continue?session=${session}`, true)
+    delay(CONFIG.open_session_delay_seconds)
+    // The app comes forward on its links whatever `open -g` asks: the app it was said in goes back in front at once.
+    if ((frontApp() || {}).name === CONFIG.target_app) {
+      const back = withState((state) => (state.return_app || {}).bundle)
+      for (let tries = 0; back && tries < 3 && (frontApp() || {}).name === CONFIG.target_app; tries++) {
+        shell(`open -b ${quote(back)}`)
+        delay(0.6)
+      }
+      // Still in front, or its field out of reach: dictate there, as before ("Stop" then goes back).
+      const why = !back ? 'no app to go back to' : (frontApp() || {}).name === CONFIG.target_app ? `${back} did not come back in front` : !reachablePrompt() ? "Claude's field out of reach" : ''
+      if (why) {
+        logDictation(`as before, after opening the session: ${why}`)
+        return dictateInTargetApp()
+      }
+      logDictation(`the session link brought Claude forward, ${back} brought back`)
+    }
+  }
+  const text = dictatedText(askSpokenly(PHRASE.dictate, CONFIG.max_dictation_seconds))
+  withState((state) => {
+    state.dictating_since = null
+    state.dictating_session = null
+    startReaderUnlessRunning(state)
+  })
+  if (!text) return
+  if (sendBehind(text)) return
+  // Not sent: the text waits in Claude's field, in front, to be sent by hand.
+  Application(CONFIG.target_app).activate()
+  say(PHRASE.not_sent)
+}
+
+function dictatedText(spokenlyReply) {
+  const text = (((spokenlyReply || {}).result || {}).content || []).map((c) => c.text || '').join('\n').normalize('NFC')
+  const answer = (text.match(/A:\s*([\s\S]*)$/) || [null, ''])[1].trim()
+  if (/^\(skipped/i.test(answer)) return ''
+  const word = CONFIG.validation_word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return answer.replace(new RegExp(`(?:[\\s,.!]*${word})+[\\s.!]*$`, 'i'), '').trim() // "stop. Stop." too
+}
+
+// The app takes text in only when its field gets the focus after the text was set, and with a delay: its Send button
+// shows once it has. Sent means Claude Code recorded the message, or, for a cloud session, the field emptied.
+// Each step goes to the log: accessibility on the app is undocumented and may change.
+function sendBehind(text) {
+  const prompt = reachablePrompt()
+  if (!prompt) return failed('field not reachable')
+  const since = now()
+  try {
+    prompt.value = text
+    delay(0.3)
+    prompt.attributes.byName('AXFocused').value = true
+  } catch (e) {
+    return failed(`could not fill the field: ${e}`)
+  }
+  for (let tries = 0; !sendButton(prompt); tries++) {
+    if (now() > since + SEND_WAIT_SECONDS) return failed('no Send button showed')
+    // Focus again now and then: the first one may come before the app has the text.
+    if (tries % 4 === 3) {
+      try {
+        prompt.attributes.byName('AXFocused').value = true
+      } catch (e) {}
+    }
+    delay(0.4)
+  }
+  // Return, sent to Claude itself (it is not in front), depends less on the app's layout than its button.
+  delay(1)
+  pressReturnIn(CONFIG.target_app)
+  if (sentWithin(since, prompt, 3)) {
+    logDictation('sent with Return')
+    return true
+  }
+  // The button shows a little before the app is ready to send, and is redrawn meanwhile: wait, then press it
+  // fresh each time, up to three times.
+  for (let press = 1; press <= 3; press++) {
+    delay(1)
+    if (sentWithin(since, prompt, 0)) {
+      logDictation(`sent (seen before press ${press})`)
+      return true
+    }
+    const button = sendButton(prompt)
+    if (!button) return failed(`the Send button went away before press ${press}`)
+    try {
+      button.actions.byName('AXPress').perform()
+    } catch (e) {
+      return failed(`Send could not be pressed: ${e}`)
+    }
+    if (sentWithin(since, prompt, 2)) {
+      logDictation(`sent, press ${press}`)
+      return true
+    }
+  }
+  return failed('Send pressed three times, the message did not leave')
+}
+
+// Checked once at least, however long a check takes (it reads the recent transcripts).
+function sentWithin(since, prompt, seconds) {
+  const deadline = now() + seconds
+  for (;;) {
+    if (messageSentSince(since) || fieldIsEmpty(prompt)) return true
+    if (now() > deadline) return false
+    delay(0.4)
+  }
+}
+
+function pressReturnIn(appName) {
+  try {
+    const pid = Application('System Events').processes.byName(appName).unixId()
+    for (const down of [true, false]) $.CGEventPostToPid(pid, $.CGEventCreateKeyboardEvent(null, RETURN_KEY, down))
+  } catch (e) {
+    logDictation(`Return could not be sent: ${e}`)
+  }
+}
+
+function failed(reason) {
+  logDictation(`not sent: ${reason}`)
+  return false
+}
+
+// Off by default; when on, only the last 200 lines are kept.
+function logDictation(line) {
+  if (!CONFIG.dictation_log) return
+  const path = `${STATE_DIR}/dictate-behind.log`
+  const kept = (readFile(path) || '').split('\n').filter(Boolean).slice(-200)
+  writeFile(path, kept.concat(`${new Date().toISOString()} ${line}`).join('\n') + '\n')
+}
+
+function sendButton(prompt) {
+  try {
+    let node = prompt
+    for (let up = 0; up < 8; up++) {
+      node = node.attributes.byName('AXParent').value()
+      const button = node.entireContents().find((e) => {
+        try {
+          return e.role() === 'AXButton' && SEND_BUTTON.test(e.description() || '') && e.enabled()
+        } catch (x) {
+          return false
+        }
+      })
+      if (button) return button
+    }
+  } catch (e) {}
+  return null
+}
+
+function fieldIsEmpty(prompt) {
+  try {
+    return !String(prompt.value() || '').trim()
+  } catch (e) {
+    return false
+  }
 }
 
 // The session is chosen first: the "Stop" that picks it does not go back yet, the "Listen" that follows does.
@@ -1177,6 +1394,7 @@ const COMMANDS = {
   '--learn-prompt-path': learnPromptPath,
   '--go-back': goBackOnceSent,
   '--guard-question': guardScreenOnlyQuestion,
+  '--dictate-behind': dictateBehind,
 }
 const SILENT_WHEN_OFF = ['', '--question', '--guard-question', '--notify', '--session-rules', '--listen', '--reply', '--search-session', '--permission']
 
@@ -1184,7 +1402,7 @@ function run(argv) {
   const command = argv[0] || ''
   if (!(command in COMMANDS)) return `unknown command: ${command}`
   if (SILENT_WHEN_OFF.includes(command) && !isVoiceModeOn()) return ''
-  // Only "--go-back" takes arguments: the others must not see them as their own parameters.
-  const output = command === '--go-back' ? goBackOnceSent(argv.slice(1)) : COMMANDS[command]()
+  // Only "--go-back" and "--dictate-behind" take arguments: the others must not see them as their own parameters.
+  const output = ['--go-back', '--dictate-behind'].includes(command) ? COMMANDS[command](argv.slice(1)) : COMMANDS[command]()
   return typeof output === 'string' ? output : ''
 }

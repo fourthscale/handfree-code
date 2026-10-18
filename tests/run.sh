@@ -338,7 +338,7 @@ check_not "Quiet stops the other voice too" "$(said)" "Cut short"
 configure
 
 # Pointing at a session: links are recorded instead of opened, and no window, click or key happens.
-export HANDFREE_OPEN_LOG="$WORK/links.log" HANDFREE_APP_SESSIONS_DIR="$WORK/app-sessions" HANDFREE_FRONT_APP=""
+export HANDFREE_OPEN_LOG="$WORK/links.log" HANDFREE_APP_SESSIONS_DIR="$WORK/app-sessions" HANDFREE_FRONT_APP="" HANDFREE_PROMPT_REACHABLE=0
 SID=11111111-2222-3333-4444-555555555555
 mkdir -p "$HANDFREE_APP_SESSIONS_DIR/x/y"
 printf '{"sessionId":"local_abc-1","cliSessionId":"%s","title":"Speaker"}' "$SID" > "$HANDFREE_APP_SESSIONS_DIR/x/y/local_abc-1.json"
@@ -346,6 +346,10 @@ transcript "$SID" 'Speaker'
 reset; reply "$SID" 'Who spoke last.'; wait_quiet 1.5
 hf --reply >/dev/null
 check "Claude Reply opens the session that spoke last" "$(cat "$HANDFREE_OPEN_LOG")" "^claude://code/continue?session=local_abc-1$"
+printf '{"sessionId":"local_abc-1","cliSessionId":"%s","title":"Speaker","lastFocusedAt":"9999999999999"}' "$SID" > "$HANDFREE_APP_SESSIONS_DIR/x/y/local_abc-1.json"; rm -f "$HANDFREE_OPEN_LOG"
+hf --reply >/dev/null; hf --done >/dev/null
+check_not "the session that spoke last already on screen: nothing is opened" "$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)" "claude://"
+printf '{"sessionId":"local_abc-1","cliSessionId":"%s","title":"Speaker"}' "$SID" > "$HANDFREE_APP_SESSIONS_DIR/x/y/local_abc-1.json"
 reply a 'Then another one spoke.'; sleep 0.3; hf --done >/dev/null; wait_quiet 1.5; rm -f "$HANDFREE_OPEN_LOG"
 hf --reply >/dev/null
 check "a speaker the app does not know opens no link" "[$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)]" "\[\]"
@@ -382,8 +386,22 @@ configure ', "return_to_previous_app": false'
 rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Safari hf --listen >/dev/null; sent 'Dictated.'; hf --done >/dev/null
 check "return_to_previous_app false: Stop stays in Claude" "[$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)]" "\\[\\]"
 configure
+
+# Said in another app with Claude's field within reach, the dictation happens with Claude left behind.
+rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Safari HANDFREE_PROMPT_REACHABLE=1 hf --listen >/dev/null; hf --done >/dev/null
+check "Listen in another app, Claude reachable: dictated with Claude behind" "$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)" "^dictate behind -$"
+rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Safari HANDFREE_PROMPT_REACHABLE=1 hf --reply >/dev/null; hf --done >/dev/null
+check "Reply too, for the session that spoke last" "$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)" "^dictate behind "
+rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Safari HANDFREE_PROMPT_REACHABLE=0 hf --listen >/dev/null; hf --done >/dev/null
+check_not "Claude out of reach (full screen elsewhere): as before" "$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)" "dictate behind"
+rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Claude HANDFREE_PROMPT_REACHABLE=1 hf --listen >/dev/null; hf --done >/dev/null
+check_not "said in Claude: as before" "$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)" "dictate behind"
+configure ', "dictate_behind": false'
+rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Safari HANDFREE_PROMPT_REACHABLE=1 hf --listen >/dev/null; hf --done >/dev/null
+check_not "dictate_behind false: as before" "$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)" "dictate behind"
+configure
 unset HANDFREE_PROJECTS_DIR HANDFREE_RETURN_WAIT_SECONDS
-unset HANDFREE_OPEN_LOG HANDFREE_APP_SESSIONS_DIR HANDFREE_FRONT_APP
+unset HANDFREE_OPEN_LOG HANDFREE_APP_SESSIONS_DIR HANDFREE_FRONT_APP HANDFREE_PROMPT_REACHABLE
 
 hf --off >/dev/null 2>&1
 rm -rf "$WORK"
