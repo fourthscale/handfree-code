@@ -28,7 +28,20 @@ claude plugin marketplace add https://github.com/fourthscale/handfree-code.git
 claude plugin install handfree-code@handfree-code
 ```
 
-(Or, inside Claude: `/plugin marketplace add …` then `/plugin install handfree-code@handfree-code`.)
+Or add it to a Claude Code settings file (`~/.claude/settings.json`, or a project's `.claude/settings.json`):
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "handfree-code": {
+      "source": { "source": "git", "url": "https://github.com/fourthscale/handfree-code.git" }
+    }
+  },
+  "enabledPlugins": {
+    "handfree-code@handfree-code": true
+  }
+}
+```
 
 Then open a new session: it copies the plugin's scripts to `~/Library/Application Support/handfree-code/`, a path that stays the same across versions. The Shortcuts call the scripts there.
 
@@ -37,11 +50,22 @@ Then open a new session: it copies the plugin's scripts to `~/Library/Applicatio
 - Microphone: your headphones'.
 - Dictation shortcut: **double tap on right Command**, in toggle mode. With another shortcut, set `spokenly_trigger` to `none`.
 - Turn off Spokenly's own "read the question aloud": the plugin already reads it.
-- Declare its MCP server in Claude Code:
+- Declare its MCP server in Claude Code, in `~/.claude.json` (MCP servers are not read from `settings.json`), replacing `<YOU>` with your user name:
+  ```json
+  {
+    "mcpServers": {
+      "spokenly": {
+        "type": "stdio",
+        "command": "/Users/<YOU>/Library/Application Support/Spokenly/mcp-bridge.sh",
+        "timeout": 120000
+      }
+    }
+  }
+  ```
+  Add the `spokenly` entry to the `mcpServers` already in the file. `timeout` (2 minutes) keeps an unanswered question from blocking the session for 30 minutes. Or with the command line, then add the `timeout` by hand:
   ```bash
   claude mcp add --scope user spokenly "$HOME/Library/Application Support/Spokenly/mcp-bridge.sh"
   ```
-- Then, in `~/.claude.json`, add `"timeout": 120000` to the `spokenly` entry under `mcpServers`. Without it, an unanswered question blocks the session for 30 minutes.
 
 ### 3. The voice
 
