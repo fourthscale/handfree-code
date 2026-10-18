@@ -149,7 +149,7 @@ Or by hand: Commands… > "+", for each command: "While using: Any Application",
 ```json
 {
   "voice_commands": {
-    "Claude Listen": "claude parle",
+    "Claude Listen": "claude écoute",
     "Claude Voice mode on": "claude réveille-toi"
   }
 }
@@ -178,9 +178,9 @@ Check: say "Claude Listen", dictate a message, say "Stop". It goes to the sessio
 - **Claude Listen** → dictate → **Stop**: the message goes to the session on screen, wherever you were.
 - **Claude Reply** → dictate → **Stop**: the message goes to the session that spoke last, even if another one is on screen. A cloud session cannot be opened this way: the session on screen gets it.
 - **Claude Session** → say a session's name → **Stop**: that session opens. Then **Claude Listen**.
-- **A question**: what Claude wrote just before it is read first (its first paragraph), then the question ("A question. …"). You answer, **Stop** or Enter sends; the answer goes back to the session that asked. To hear the rest of that text first, answer "the rest" ("la suite", "der Rest"): it is read, then Claude asks again.
+- **A question**: Claude writes its reply in full, the question last, and ends its turn; it is then asked to put the question alone to Spokenly. The reply stays on screen and its first paragraph is read first, then "There is more" if text remains, then the question ("A question. …"). A long reply is summed up in two or three sentences Claude puts with the question: its first paragraph and that summary are read at once, then the question; "the rest" or "the details" read it in full. The voice rules ask for that order because text written just before a tool call may be hidden in the app. You answer, **Stop** or Enter sends; the answer goes back to the session that asked. To hear the rest of that text first, answer "the rest" ("la suite", "der Rest"): a long rest comes as a summary Claude writes, read before the question asked again; answer "the details" ("le détail", "die Details") to hear the full text, then Claude asks once more. A short rest is read as it is. `"summarize_rest": false` reads the full rest straight away.
 - **A reply**: the first paragraph is read, then "There is more" if text remains. **Claude Continue** reads the rest, **Claude Restart** reads it all again, **Claude Quiet** cuts it (say it between two lines).
-- **Several sessions**: readings wait their turn. A session's name is said when the speaker changes. Nothing is read while you dictate.
+- **Several sessions**: readings wait their turn. A session's name is said when the speaker changes. A question waits for the reading under way to reach its pause (its first paragraph, up to a minute), then nothing else is read until you answer: Spokenly never takes down another voice.
 - **Music or a video**: paused while Claude speaks, resumed afterwards. Only the app the keyboard's play/pause key drives; if nothing plays, nothing is touched.
 - **A session started by another one** stays quiet: the one that started it relays its result. Talk to it yourself and it answers aloud.
 - **Away from the Mac** (keyboard and mouse idle for `away_after_idle_seconds`): questions are asked in writing instead.
@@ -326,7 +326,7 @@ On claude.ai, in the cloud environment's settings:
   ```
   It installs the plugin and declares Spokenly at the tunnel's address, with the token and the key. It never fails the environment: with a piece missing, sessions just stay silent.
 
-Optional: `HANDFREE_OVERRIDES` changes a few reading settings for that environment's sessions, in JSON, for instance `{"first_paragraph_only": false, "language": "en"}`. Accepted keys: `language`, `voice`, `validation_word`, `first_paragraph_only`, `pause_between_lines_seconds`, `silence_around_title_ms`. Nothing that would make the Mac run a program.
+Optional: `HANDFREE_OVERRIDES` changes a few reading settings for that environment's sessions, in JSON, for instance `{"first_paragraph_only": false, "language": "en"}`. Accepted keys: `language`, `voice`, `validation_word`, `first_paragraph_only`, `summarize_rest`, `pause_between_lines_seconds`, `silence_around_title_ms`. Nothing that would make the Mac run a program.
 
 ### Security
 
@@ -366,6 +366,7 @@ All optional, in `~/.config/claude-speak.json`:
 | `voice_commands` | per language | your phrases for the Voice Control commands, read by `install-voice-commands.py` |
 | `validation_word` | `stop` | word that sends a dictation; sessions ignore it at the end of a message |
 | `first_paragraph_only` | `true` | `false` reads the whole reply right away |
+| `summarize_rest` | `true` | answering "the rest" to a question: a long rest is summed up first, "the details" reads it in full; `false` reads it in full at once |
 | `pause_between_lines_seconds` | `1.2` | silence between lines, where a voice command gets through |
 | `silence_around_title_ms` | `800` | silence around the session's name |
 | `announce_session` | `on_change` | say the session's name when the speaker changes, or `always` |

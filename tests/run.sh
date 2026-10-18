@@ -56,14 +56,14 @@ check_not "nothing is read while dictating" "$(said)" "During"
 hf --done >/dev/null; wait_quiet 1.5
 check "Stop lets the queue go on" "$(said)" "During the dictation"
 
-reset; reply a 'A long line being read.\nNext line.'; sleep 0.3
+reset; reply a 'A long line being read.\nSame paragraph.\n\nNext line.'; sleep 0.3
 printf '{"session_id":"b","transcript_path":"%s/b.jsonl","tool_input":{"questions":["Shall we?"]}}' "$WORK" | hf --question >/dev/null
-check "a question lets the current line end first" "$(said | tr '\n' ' ')" "A long line being read.*A question.*Shall we"
+check "a question lets the reading under way reach its pause first" "$(said | tr '\n' ' ')" "A long line being read.*Same paragraph.*There is more.*A question.*Shall we"
 printf '{"session_id":"b","transcript_path":"%s/b.jsonl"}' "$WORK" | hf --notify; sleep 1
 check_not "the waiting notice is dropped while the answer is dictated" "$(said)" "Claude needs your answer"
 check_not "and holds the rest until the answer" "$(said)" "Next line"
-hf --done >/dev/null; wait_quiet 1.5
-check "the rest follows the answer" "$(said)" "Next line"
+hf --done >/dev/null; hf --resume >/dev/null; wait_quiet 1.5
+check "after the answer, Continue reads the rest" "$(said)" "Next line"
 reset; printf '{"session_id":"b","transcript_path":"%s/b.jsonl","tool_input":{"questions":["Shall we?"]}}' "$WORK" | hf --question >/dev/null
 check "a question is announced with its session" "$(said)" "Session Project Beta.*A question.*Shall we"
 reply a 'After the question.'; sleep 1
@@ -102,6 +102,50 @@ reset; reply q 'Intro para.\n\nMore para.'; wait_quiet 1.5
 check_not "the same text is not read again at the turn's end" "$(said)" "Intro para"
 reply q 'Final words.'; wait_quiet 1.5
 check "a new reply is read" "$(said)" "Final words"
+
+# The context put in the question itself (text written before the call kept only as a thinking summary).
+transcript k 'Options'
+printf '{"type":"assistant","message":{"id":"m2","content":[{"type":"thinking","thinking":"A summary."}]}}\n' >> "$WORK/k.jsonl"
+reset; printf '{"session_id":"k","transcript_path":"%s/k.jsonl","tool_input":{"questions":["Option A first.\\n\\nOption B second.\\n\\nWhich one?"]}}' "$WORK" | hf --question >/dev/null
+check "a question's own context is read first" "$(said | tr '\n' ' ')" "Option A first.*There is more.*A question.*Which one"
+check_not "only its first paragraph, not the rest" "$(said)" "Option B second"
+check_not "nor the thinking summary" "$(said)" "A summary"
+out=$(printf '{"session_id":"k","tool_response":[{"type":"text","text":"Q: Which one?\\nA: La suite. Stop"}]}' | hf --answered)
+check "answering \"the rest\" reads the rest of the context" "$(said)" "Option B second"
+reply b 'Meanwhile from Beta.'; sleep 1.5
+check_not "another session waits while the question is asked again" "$(said)" "Meanwhile from Beta"
+printf '{"session_id":"k","transcript_path":"%s/k.jsonl","tool_input":{"questions":["Which one?"]}}' "$WORK" | hf --question >/dev/null
+printf '{"session_id":"k","tool_response":[{"type":"text","text":"Q: Which one?\\nA: Option A. Stop"}]}' | hf --answered >/dev/null; wait_quiet 2.5
+check "and is read once it is answered" "$(said)" "Meanwhile from Beta"
+reset; printf '{"session_id":"k","transcript_path":"%s/k.jsonl","tool_input":{"questions":["Short one?"]}}' "$WORK" | hf --question >/dev/null
+check "a one-paragraph question is read as it is" "$(said | tr '\n' ' ')" "A question.*Short one"
+check_not "with no rest announced" "$(said)" "There is more"
+printf '{"session_id":"k"}' | hf --answered >/dev/null
+
+# The same text written in the message and copied into the question is read once.
+transcript d 'Dup'
+printf '{"type":"assistant","message":{"id":"m3","content":[{"type":"text","text":"Same intro."}]}}\n' >> "$WORK/d.jsonl"
+reset; printf '{"session_id":"d","transcript_path":"%s/d.jsonl","tool_input":{"questions":["Same intro.\\n\\nWhich?"]}}' "$WORK" | hf --question >/dev/null
+check "a copied paragraph is read" "$(said)" "Same intro"
+check "only once" "$(said | grep -c 'Same intro')" "^1$"
+printf '{"session_id":"d"}' | hf --answered >/dev/null
+
+# A long rest: "the rest" asks Claude for a summary, "the details" then reads the full text.
+transcript s 'Long'
+printf '{"type":"assistant","message":{"id":"m4","content":[{"type":"thinking","thinking":"x"}]}}\n' >> "$WORK/s.jsonl"
+reset; printf '{"session_id":"s","transcript_path":"%s/s.jsonl","tool_input":{"questions":["First part.\\n\\nPart two.\\n\\nPart three.\\n\\nPart four.\\n\\nWhich?"]}}' "$WORK" | hf --question >/dev/null
+out=$(printf '{"session_id":"s","tool_response":[{"type":"text","text":"Q: Which?\\nA: Lis la suite. Stop"}]}' | hf --answered)
+check_not "a long rest is not read on \"the rest\"" "$(said)" "Part two"
+check "Claude is asked for a summary" "$out" "summing up"
+reset; printf '{"session_id":"s","transcript_path":"%s/s.jsonl","tool_input":{"questions":["In short, parts two to four.\\n\\nWhich?"]}}' "$WORK" | hf --question >/dev/null
+check "the summary is read, then how to hear it all, then the question" "$(said | tr '\n' ' ')" "In short.*the details.*A question.*Which"
+out=$(printf '{"session_id":"s","tool_response":[{"type":"text","text":"Q: Which?\\nA: Montre le de\\u0301tail. Stop"}]}' | hf --answered)
+check "\"the details\" (accents decomposed) reads the full text" "$(said | tr '\n' ' ')" "Part two.*Part three.*Part four"
+check "and has Claude ask again" "$out" "Ask the same question again"
+reset; printf '{"session_id":"s","transcript_path":"%s/s.jsonl","tool_input":{"questions":["Which?"]}}' "$WORK" | hf --question >/dev/null
+check_not "the details are offered no more" "$(said)" "the details"
+out=$(printf '{"session_id":"s","tool_response":[{"type":"text","text":"Q: Which?\\nA: The second. Stop"}]}' | hf --answered)
+check_not "the real answer goes through" "$out" "block"
 
 reset; printf '{"type":"user","turnOrigin":"sdk","message":{"content":"Background (from the session that started this one): x"}}\n' >> "$WORK/b.jsonl"
 reply b 'Delegated task.'; sleep 1
@@ -143,6 +187,28 @@ if spokenly_declared; then
   reset; out=$(printf '{"session_id":"a","transcript_path":"%s/a.jsonl","last_assistant_message":"Done.\\n\\nShall I push it?"}' "$WORK" | hf); sleep 1
   check "a reply ending on a written question is sent back" "$out" '"decision":"block"'
   check_not "and is not read meanwhile" "$(said)" "push"
+  printf '{"session_id":"a","transcript_path":"%s/a.jsonl","tool_input":{"questions":["Shall I push it?"]}}' "$WORK" | hf --question >/dev/null
+  check "the reply sent back is read before its question, which is not read twice" "$(said | tr '\n' ' ')" "Done. *A question.*Shall I push it"
+  check "its written question is not read as text" "$(said | grep -c 'push')" "^1$"
+  printf '{"session_id":"a"}' | hf --answered >/dev/null
+  reset; out=$(printf '{"session_id":"a","transcript_path":"%s/a.jsonl","last_assistant_message":"Intro.\\n\\nTwo.\\n\\nThree.\\n\\nFour.\\n\\nWhich one?"}' "$WORK" | hf)
+  check "a long reply sent back asks for its summary with the question" "$out" "summing up your reply"
+  printf '{"session_id":"a","transcript_path":"%s/a.jsonl","tool_input":{"questions":["In short, two to four.\\n\\nWhich one?"]}}' "$WORK" | hf --question >/dev/null
+  check "its first paragraph, its summary, how to hear it all, the question" "$(said | tr '\n' ' ')" "Intro.*In short.*the details.*A question.*Which one"
+  check_not "with no rest announced" "$(said)" "There is more"
+  check_not "nor the rest read" "$(said)" "Two"
+  out=$(printf '{"session_id":"a","tool_response":[{"type":"text","text":"Q: Which one?\\nA: La suite. Stop"}]}' | hf --answered)
+  check "\"the rest\" then reads the reply in full" "$(said | tr '\n' ' ')" "Two.*Three.*Four"
+  check "and has Claude ask again" "$out" "Ask the same question again"
+  printf '{"session_id":"a","tool_response":[{"type":"text","text":"Q: Which one?\\nA: The first. Stop"}]}' | hf --answered >/dev/null
+  reset; printf '{"session_id":"a","transcript_path":"%s/a.jsonl","last_assistant_message":"Intro.\\n\\nTwo.\\n\\nThree.\\n\\nFour.\\n\\nWhich one?"}' "$WORK" | hf >/dev/null
+  printf '{"session_id":"a","transcript_path":"%s/a.jsonl","tool_input":{"questions":["Which one?"]}}' "$WORK" | hf --question >/dev/null
+  check "no summary given: the first paragraph, the rest announced" "$(said | tr '\n' ' ')" "Intro.*There is more.*A question.*Which one"
+  out=$(printf '{"session_id":"a","tool_response":[{"type":"text","text":"Q: Which one?\\nA: La suite. Stop"}]}' | hf --answered)
+  check "and \"the rest\" asks for it" "$out" "summing up"
+  printf '{"session_id":"a","tool_response":[{"type":"text","text":"Q: Which one?\\nA: Le détail. Stop"}]}' | hf --answered >/dev/null
+  check "\"the details\" read the reply in full" "$(said | tr '\n' ' ')" "Two.*Three.*Four"
+  stop_hook=$(printf '{"session_id":"a","stop_hook_active":true,"transcript_path":"%s/a.jsonl","last_assistant_message":"Noted."}' "$WORK" | hf); wait_quiet 1.5
   out=$(printf '{"session_id":"a","stop_hook_active":true,"transcript_path":"%s/a.jsonl","last_assistant_message":"Shall I push it?"}' "$WORK" | hf)
   check_not "a reply already sent back once is not sent back again" "$out" "block"
   wait_quiet 1.5

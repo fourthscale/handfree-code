@@ -44,6 +44,7 @@ const DEFAULTS = {
   pause_media: true, // pause the Now Playing app (music, YouTube…) while speaking, resume afterwards
   max_dictation_seconds: 180, // a dictation abandoned without "Stop" frees the reader after this
   first_paragraph_only: true, // the rest waits for "Continue"
+  summarize_rest: true, // answering "the rest" to a question: a summary first, "the details" for the full text
   validation_word: 'stop', // the Voice Control word that sends a dictation; Spokenly may transcribe it
   question_tool: 'mcp__spokenly__ask_user_dictation',
   target_app: 'Claude', // the app "Listen" brings forward
@@ -66,27 +67,31 @@ const DEFAULTS = {
 }
 
 const PHRASES = {
-  fr: { session: 'Session {title}.', question: 'Une question.', link: 'lien', code: 'Bloc de code omis.', more: 'Il y a une suite.', voice_on: 'Mode vocal activé.', voice_off: 'Mode vocal désactivé.', permission: 'Autorisation demandée : {action}. Autoriser ?', idle: "Claude t'attend", waiting: 'Claude attend ta réponse' },
-  en: { session: 'Session {title}.', question: 'A question.', link: 'link', code: 'Code block skipped.', more: 'There is more.', voice_on: 'Voice mode on.', voice_off: 'Voice mode off.', permission: 'Permission requested: {action}. Allow?', idle: 'Claude is waiting', waiting: 'Claude needs your answer' },
-  de: { session: 'Sitzung {title}.', question: 'Eine Frage.', link: 'Link', code: 'Codeblock ausgelassen.', more: 'Es gibt noch mehr.', voice_on: 'Sprachmodus an.', voice_off: 'Sprachmodus aus.', permission: 'Erlaubnis angefragt: {action}. Erlauben?', idle: 'Claude wartet', waiting: 'Claude wartet auf deine Antwort' },
+  fr: { session: 'Session {title}.', question: 'Une question.', link: 'lien', code: 'Bloc de code omis.', more: 'Il y a une suite.', detail: 'Pour tout entendre, réponds « le détail ».', voice_on: 'Mode vocal activé.', voice_off: 'Mode vocal désactivé.', permission: 'Autorisation demandée : {action}. Autoriser ?', idle: "Claude t'attend", waiting: 'Claude attend ta réponse' },
+  en: { session: 'Session {title}.', question: 'A question.', link: 'link', code: 'Code block skipped.', more: 'There is more.', detail: 'To hear it all, answer "the details".', voice_on: 'Voice mode on.', voice_off: 'Voice mode off.', permission: 'Permission requested: {action}. Allow?', idle: 'Claude is waiting', waiting: 'Claude needs your answer' },
+  de: { session: 'Sitzung {title}.', question: 'Eine Frage.', link: 'Link', code: 'Codeblock ausgelassen.', more: 'Es gibt noch mehr.', detail: 'Um alles zu hören, antworte „die Details“.', voice_on: 'Sprachmodus an.', voice_off: 'Sprachmodus aus.', permission: 'Erlaubnis angefragt: {action}. Erlauben?', idle: 'Claude wartet', waiting: 'Claude wartet auf deine Antwort' },
 }
 
 const SESSION_RULES = {
   fr:
     'Mode vocal actif.\n' +
     "- Quand tu dois me poser une question et attendre ma réponse (un grill, un choix, une validation), utilise l'outil `{tool}` plutôt que `AskUserQuestion`. " +
-    "Y compris la question de fin de tour : les boutons de l'app ne me sont pas lus, je ne peux pas y répondre à la voix.\n" +
+    "Y compris la question de fin de tour : les boutons de l'app ne me sont pas lus, je ne peux pas y répondre à la voix. " +
+    "Quand la question porte sur un texte (des options, une explication), écris ce texte en entier dans ta réponse, la question à la fin, et termine ton tour sans appeler l'outil : " +
+    "on te demandera alors de poser la question seule avec l'outil, et ton texte me sera lu avant. Le texte écrit juste avant un appel d'outil peut être caché dans l'app.\n" +
     "- Je dicte et je valide en disant « {word} » : un « {word} » en fin de message ou de réponse dictée est cette commande, pas une demande d'arrêter. Ignore-le.",
   en:
     'Voice mode is on.\n' +
     '- When you need to ask me a question and wait for the answer (a grill, a choice, a go-ahead), use the `{tool}` tool rather than `AskUserQuestion`, ' +
-    "including the end-of-turn question: the app's buttons are not read to me and I cannot answer them by voice.\n" +
+    "including the end-of-turn question: the app's buttons are not read to me and I cannot answer them by voice. " +
+    "When the question is about some text (options, an explanation), write that text in full in your reply, the question last, and end your turn without calling the tool: " +
+    "you will then be asked to put the question alone to the tool, and your text is read to me first. Text written just before a tool call may be hidden in the app.\n" +
     '- I dictate and send by saying "{word}": a trailing "{word}" in a dictated message or answer is that command, not a request to stop. Ignore it.',
 }
 
 const DELEGATED_TURN_ORIGINS = ['sdk', 'peer'] // an unknown value, after a Claude Code update, reads the reply
 const LEARNING_TIMEOUT_SECONDS = 120
-const MAX_LINE_WAIT_SECONDS = 20
+const MAX_READING_WAIT_SECONDS = 60 // the question hook has 120 s in all, its own reading included
 const LOCK_STALE_SECONDS = 10
 
 // ---------- system helpers
@@ -145,7 +150,7 @@ function readStdin() {
 // ---------- configuration and phrases
 
 // A cloud environment may adjust how its sessions are read; nothing that would run a program on this Mac.
-const CLOUD_OVERRIDABLE = ['language', 'voice', 'validation_word', 'first_paragraph_only', 'pause_between_lines_seconds', 'silence_around_title_ms']
+const CLOUD_OVERRIDABLE = ['language', 'voice', 'validation_word', 'first_paragraph_only', 'summarize_rest', 'pause_between_lines_seconds', 'silence_around_title_ms']
 const CONFIG = Object.assign({}, DEFAULTS, readJson(CONFIG_PATH) || {}, cloudOverrides())
 
 function cloudOverrides() {
@@ -269,7 +274,7 @@ function sendMediaCommand(name) {
 // ---------- state, shared by every process, behind a lock
 
 function emptyState() {
-  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, dictating_session: null, reading_requested: false, read_before_question: null, voice_off: false, prompt_path: null, learning_since: null, media_paused: false, last_speech_end: 0, speaker_pid: null }
+  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, dictating_session: null, reading_requested: false, finishing_current: false, read_before_question: null, reply_before_question: null, detail: null, voice_off: false, prompt_path: null, learning_since: null, media_paused: false, last_speech_end: 0, speaker_pid: null }
 }
 
 function withState(change) {
@@ -433,9 +438,10 @@ function announcement(title) {
 }
 
 // While an answer is dictated, only "Continue" or "Restart" read, and only the reply on hold: nothing new starts.
+// A question about to be asked lets the reply under way reach its pause first.
 function nextLineToSay(state) {
   const onlyCurrent = isDictating(state)
-  if (onlyCurrent && !state.reading_requested) return null
+  if (onlyCurrent && !state.reading_requested && !state.finishing_current) return null
   for (;;) {
     const item = state.current
     if (item && item.position < Math.min(item.pause_at, item.lines.length)) {
@@ -487,8 +493,8 @@ function enqueue(data, entries, lines, pauseAt) {
 // ---------- hooks
 
 const UNSPOKEN_QUESTION = {
-  fr: "Ce tour se termine sur une question posée seulement à l'écrit ou dans la boîte de l'app : l'utilisateur pilote à la voix et ne peut pas y répondre. Pose-la maintenant avec l'outil `{tool}`, puis termine sans la répéter à l'écrit.",
-  en: "This turn ends on a question asked only in writing or in the app's box: the user drives by voice and cannot answer it. Ask it now with the `{tool}` tool, then finish without repeating it in writing.",
+  fr: "Ce tour se termine sur une question posée seulement à l'écrit ou dans la boîte de l'app : l'utilisateur pilote à la voix et ne peut pas y répondre. Pose-la maintenant avec l'outil `{tool}`, la question seule : ta réponse est affichée et lui est lue avant. Puis termine sans la répéter à l'écrit.",
+  en: "This turn ends on a question asked only in writing or in the app's box: the user drives by voice and cannot answer it. Ask it now with the `{tool}` tool, the question alone: your reply is on screen and is read to them first. Then finish without repeating it in writing.",
 }
 
 function currentTurn(entries) {
@@ -513,7 +519,13 @@ function unspokenQuestionBlock(data, entries, reply) {
   if (data.stop_hook_active || !questionsCanBeSpoken() || userIsAway()) return null
   if (!asksInTheAppBox(currentTurn(entries)) && !endsOnWrittenQuestion(reply)) return null
   const reason = (UNSPOKEN_QUESTION[LANGUAGE] || UNSPOKEN_QUESTION.en).replace('{tool}', CONFIG.question_tool)
-  return JSON.stringify({ decision: 'block', reason })
+  // The reply stays on screen; it is read before the question asked next, without its last paragraph when that is the question.
+  const paragraphs = (reply || '').trim().split(/\n\s*\n/)
+  const text = endsOnWrittenQuestion(reply) ? paragraphs.slice(0, -1).join('\n\n') : paragraphs.join('\n\n')
+  // A long reply: its summary comes with the question, so the first reading already covers it all.
+  const long = CONFIG.summarize_rest && speakableLines(text).length - linesThroughFirstParagraph(text) >= SUMMARY_MIN_LINES
+  withState((state) => (state.reply_before_question = text ? { session: data.session_id, text, long } : null))
+  return JSON.stringify({ decision: 'block', reason: long ? `${reason} ${SUMMARY_FIRST}` : reason })
 }
 
 function queueNewReply() {
@@ -526,6 +538,8 @@ function queueNewReply() {
   const alreadyRead = withState((state) => {
     const before = state.read_before_question
     if (before && before.session === data.session_id) state.read_before_question = null
+    // Sent back but never asked: that reply is not waiting for a question any more.
+    if ((state.reply_before_question || {}).session === data.session_id) state.reply_before_question = null
     return Boolean(before && before.session === data.session_id && before.text === reply.trim())
   })
   if (alreadyRead) return
@@ -570,7 +584,8 @@ function describeAction(toolName, toolInput) {
 }
 
 function answerOf(spokenlyReply) {
-  const text = (((spokenlyReply || {}).result || {}).content || []).map((c) => c.text || '').join('\n')
+  // macOS may hand accents decomposed.
+  const text = (((spokenlyReply || {}).result || {}).content || []).map((c) => c.text || '').join('\n').normalize('NFC')
   const answer = (text.match(/A:\s*([\s\S]*)$/) || [null, text])[1].toLowerCase()
   return answer.split(/[^a-zà-ÿ'-]+/).filter((word) => word && word !== CONFIG.validation_word.toLowerCase())
 }
@@ -599,7 +614,7 @@ function answerPermission() {
   if (!CONFIG.voice_permissions || CONTEXT !== 'local' || userIsAway() || !spokenlyResponds()) return ''
   const entries = readTranscript(data.transcript_path)
   const question = PHRASE.permission.replace('{action}', describeAction(data.tool_name || '', data.tool_input))
-  holdReaderAfterCurrentLine()
+  holdReaderAfterCurrentReading()
   say(`${introFor(data, entries)}${question}`)
   startDictating()
   const decision = decide(answerOf(askSpokenly(question)))
@@ -616,19 +631,56 @@ function readQuestion() {
   }
   const data = readStdin()
   const entries = readTranscript(data.transcript_path)
-  const questions = (data.tool_input || {}).questions || []
+  const { context, questions } = splitQuestions((data.tool_input || {}).questions || [])
   // The queue stays paused: restarting it would talk over the answer being dictated.
-  holdReaderAfterCurrentLine()
+  holdReaderAfterCurrentReading(data.session_id)
   const intro = introFor(data, entries)
-  const before = readTextBeforeQuestion(data, entries, intro)
-  say(`${before ? '' : intro}${PHRASE.question} ${SILENCE} ${questions.join(' ')}`)
+  const sentBack = withState((state) => {
+    const reply = state.reply_before_question
+    state.reply_before_question = null
+    return reply && reply.session === data.session_id ? reply : { text: '' }
+  })
+  const written = textOfLastMessage(entries)
+  const before =
+    sentBack.long && context
+      ? readSummedUp(data, entries, intro, sentBack.text, context)
+      : readTextBeforeQuestion(data, entries, intro, uniqueParagraphs(sentBack.text, written, context), written)
+  const detailWaits = withState((state) => Boolean(state.detail && state.detail.session === data.session_id))
+  // After a summary, the full text it sums up is kept: say how to hear it.
+  if (detailWaits) say(`${before ? '' : intro}${PHRASE.detail}`)
+  say(`${before || detailWaits ? '' : intro}${PHRASE.question} ${SILENCE} ${questions.join(' ')}`)
   startDictating(data.session_id)
 }
 
-// What Claude wrote just before asking is part of its answer: its turn has not ended, so no reply reading will
-// come. Its first paragraph is read before the question; the rest becomes the reply "Continue" reads.
-function readTextBeforeQuestion(data, entries, intro) {
-  const text = textOfLastMessage(entries)
+// A question written in several paragraphs carries its context: the last paragraph is the question itself.
+// Text written before the tool call can end up out of the transcript (kept as a thinking summary); the tool's input never does.
+function splitQuestions(items) {
+  const context = []
+  const questions = items.map((item) => {
+    const paragraphs = String(item).trim().split(/\n\s*\n/)
+    context.push(...paragraphs.slice(0, -1))
+    return paragraphs[paragraphs.length - 1]
+  })
+  return { context: context.join('\n\n'), questions }
+}
+
+// The same text, written in the message and copied into the question, is read once.
+function uniqueParagraphs(...texts) {
+  const seen = new Set()
+  return texts
+    .flatMap((text) => (text || '').trim().split(/\n\s*\n/))
+    .filter((paragraph) => {
+      const key = paragraph.replace(/\s+/g, ' ').trim()
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .join('\n\n')
+}
+
+// What Claude wrote just before asking, or put in the question as its context, is part of its answer: its turn has not
+// ended, so no reply reading will come. Its first paragraph is read before the question; the rest is what "the rest" reads.
+function readTextBeforeQuestion(data, entries, intro, text, written) {
   if (!text) return ''
   const lines = speakableLines(text)
   if (!lines.length) return ''
@@ -642,9 +694,27 @@ function readTextBeforeQuestion(data, entries, intro) {
     state.current = { id: state.next_id, session: data.session_id, title: sessionTitle(entries, data.cwd), lines, position: pauseAt, pause_at: pauseAt, more_announced: true }
     state.announced_id = state.next_id
     state.next_id += 1
-    state.read_before_question = { session: data.session_id, text: text.trim() }
+    state.read_before_question = written ? { session: data.session_id, text: written.trim() } : null
   })
   return text
+}
+
+// A long reply sent back: its first paragraph, then the summary put in the question; the rest waits for "the details".
+function readSummedUp(data, entries, intro, reply, summary) {
+  const replyLines = speakableLines(reply)
+  const cut = linesThroughFirstParagraph(reply) || replyLines.length
+  const lines = replyLines.slice(0, cut).concat(speakableLines(summary))
+  lines.forEach((line, i) => {
+    say(`${i === 0 ? intro : ''}${line}`)
+    delay(CONFIG.pause_between_lines_seconds)
+  })
+  withState((state) => {
+    state.current = { id: state.next_id, session: data.session_id, title: sessionTitle(entries, data.cwd), lines, position: lines.length, pause_at: lines.length, more_announced: true }
+    state.announced_id = state.next_id
+    state.next_id += 1
+    state.detail = { session: data.session_id, lines: replyLines.slice(cut) }
+  })
+  return reply
 }
 
 // The text blocks of the message that carries the question (they are written to the transcript before the call).
@@ -724,29 +794,55 @@ function doneDictating() {
   })
 }
 
-// An answer that only asks for the rest of the text read before the question.
+// Answers that only ask for the rest of the text read before the question: summed up first, then in full.
 const MORE_ANSWERS = ['la suite', 'suite', 'continue', 'lis la suite', 'the rest', 'more', 'go on', 'weiter', 'mehr', 'der rest']
+const DETAIL_ANSWERS = ['le détail', 'détail', 'les détails', 'détails', 'montre le détail', 'lis le détail', 'tout', 'the details', 'details', 'the detail', 'detail', 'all of it', 'die details', 'details zeigen', 'alles']
+const SUMMARY_MIN_LINES = 3 // a shorter rest is read as it is
 const ASK_AGAIN = 'The user answered that they first want to hear the rest of what you wrote before this question; it has just been read aloud to them. Ask the same question again with the same tool, without repeating that text.'
+const SUMMARY_FIRST =
+  'Your reply is long: in the question, put first one paragraph of two or three sentences summing up your reply after its first paragraph (which is read), ' +
+  'then the question as the last paragraph. The full reply stays on screen, and the user can ask to hear it.'
+const ASK_SUMMARY =
+  'The user answered that they first want the rest of what you wrote before this question, summed up. Ask the same question again with the same tool: ' +
+  'a first paragraph of two or three sentences summing up that rest (everything after its first paragraph, which was read), then the question as the last paragraph. ' +
+  'Do not repeat the full text: it is kept, and the user can ask to hear it.'
 
 function answered() {
   const data = readStdin()
-  const words = answerOf({ result: { content: textBlocks(data.tool_response) } })
-  const wantsMore = MORE_ANSWERS.includes(words.join(' '))
-  const rest = withState((state) => {
-    const item = state.current
-    const lines = wantsMore && item && item.session === data.session_id ? item.lines.slice(item.position) : []
-    if (lines.length) Object.assign(item, { position: item.lines.length, pause_at: item.lines.length })
-    Object.assign(state, { dictating_since: null, dictating_session: null })
-    if (!lines.length) startReaderUnlessRunning(state)
-    return lines
+  const answer = answerOf({ result: { content: textBlocks(data.tool_response) } }).join(' ')
+  const wantsMore = MORE_ANSWERS.includes(answer)
+  const wantsDetail = DETAIL_ANSWERS.includes(answer)
+  const { lines, reason } = withState((state) => {
+    const item = state.current && state.current.session === data.session_id ? state.current : null
+    const rest = item ? item.lines.slice(item.position) : []
+    const detail = state.detail && state.detail.session === data.session_id ? state.detail.lines : []
+    const consumeRest = () => Object.assign(item, { position: item.lines.length, pause_at: item.lines.length })
+    // Asking for more: the question is asked again right after, so the other sessions keep waiting.
+    const held = wantsMore || wantsDetail
+    Object.assign(state, { dictating_since: held ? now() : null, dictating_session: held ? data.session_id : null, detail: null })
+    if (wantsMore && rest.length >= SUMMARY_MIN_LINES && CONFIG.summarize_rest) {
+      consumeRest()
+      state.detail = { session: data.session_id, lines: rest }
+      return { lines: [], reason: ASK_SUMMARY }
+    }
+    // "The rest" reads what is left, "the details" what a summary summed up; each falls back on the other.
+    const [first, second] = wantsDetail ? [detail, rest] : [rest, detail]
+    const found = wantsMore || wantsDetail ? (first.length ? first : second) : []
+    if (found.length && found === rest) consumeRest()
+    if (!found.length) {
+      Object.assign(state, { dictating_since: null, dictating_session: null })
+      startReaderUnlessRunning(state)
+    }
+    return { lines: found, reason: ASK_AGAIN }
   })
-  if (!rest.length) return ''
+  if (reason === ASK_SUMMARY) return JSON.stringify({ decision: 'block', reason })
+  if (!lines.length) return ''
   // Read here, before Claude asks again: its new question would cut a reading still going on.
-  rest.forEach((line) => {
+  lines.forEach((line) => {
     say(line)
     delay(CONFIG.pause_between_lines_seconds)
   })
-  return JSON.stringify({ decision: 'block', reason: ASK_AGAIN })
+  return JSON.stringify({ decision: 'block', reason })
 }
 
 // A tool's response comes as text, a list of content blocks, or an object holding them.
@@ -761,15 +857,22 @@ function stop() {
   withState(killReader)
 }
 
-// A question lets the line being read end first: cut mid-sentence, neither is understood.
-function holdReaderAfterCurrentLine() {
+// A question lets the reading under way end first (up to where it pauses), then nothing else starts: two voices at once
+// are not understood, and Spokenly would take down the other one.
+function holdReaderAfterCurrentReading(session) {
   const readerPid = withState((state) => {
-    state.dictating_since = now() // the reader stops before its next line
+    state.dictating_since = now() // the reader takes no new reply
+    state.dictating_session = session || null
+    state.reading_requested = false // an earlier "Continue" would let it read on, or start again, over the question
+    state.finishing_current = true
     return state.reader_pid
   })
-  const deadline = now() + MAX_LINE_WAIT_SECONDS
+  const deadline = now() + MAX_READING_WAIT_SECONDS
   while (isAlive(readerPid) && now() < deadline) delay(0.2)
-  withState(killReader)
+  withState((state) => {
+    state.finishing_current = false
+    killReader(state)
+  })
 }
 
 function resume() {
