@@ -128,7 +128,7 @@ System Settings > Accessibility > Voice Control: turn it on, with the **Mac's** 
 /usr/bin/python3 handfree-code/bin/install-voice-commands.py
 ```
 
-It adds one command per shortcut in Voice Control's language (French, English or German), saves your commands first, and points a command whose phrase already exists at the new shortcut instead of doubling it. `--dry-run` shows what it would do. Turn Voice Control back on afterwards.
+It adds one command per shortcut in Voice Control's language (French, English or German), saves your commands first, and points a command whose phrase already exists at the new shortcut instead of doubling it. `--dry-run` shows what it would do. Turn Voice Control back on afterwards, and check it is back in command mode (see below): it may restart in dictation mode and type the commands instead of running them.
 
 Or by hand: Commands… > "+", for each command: "While using: Any Application", "Perform: Run Shortcut".
 
