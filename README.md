@@ -6,20 +6,19 @@ Drive Claude Code by voice on macOS, hands free.
 - **You talk**: you dictate with [Spokenly](https://spokenly.app) and send by saying "stop". Claude asks its questions through Spokenly and you answer aloud.
 - **You steer it** with a few spoken commands: "Claude Listen", "Claude Reply", "Claude Session", "Stop", "Claude Quiet", "Claude Continue", "Claude Restart", "Claude Voice mode on/off".
 
-The plugin sets up Claude Code. The macOS side (Shortcuts, Voice Control, permissions) is done by hand, once: macOS does not let a program grant itself these rights.
-
-Tested on macOS 14.4.1 with the Claude desktop app. It only relies on what macOS ships (`osascript`, `say`); the optional cloud bridge also needs `/usr/bin/python3`.
+Setup comes in two parts: a **quick start** (5 minutes) that reads Claude aloud and lets you answer its questions by voice, then the **hands-free setup** (about 20 minutes, by hand once: macOS does not let a program grant itself these rights) for the spoken commands.
 
 ## Requirements
 
-- macOS, the Claude desktop app and the `claude` command line (Claude Code in a terminal works too: see `target_app` in *Settings*).
+- macOS 14 or later (tested on 14.4.1). The plugin only relies on what macOS ships (`osascript`, `say`); the optional cloud bridge also needs `/usr/bin/python3`.
+- The Claude desktop app and the `claude` command line; tested with Claude Code 2.1.287 (`claude --version`). Claude Code in a terminal works too: see `target_app` in *Settings*.
 - [Spokenly](https://spokenly.app); the free tier is enough.
 - Two microphones: your headphones' for Spokenly, the Mac's for Voice Control. With a single microphone they fight over it.
 - Headphones, preferably: otherwise the Mac's microphone hears the reading voice, and a command word read by Claude can trigger on its own.
 
 **Privacy.** Depending on the model chosen in Spokenly, your voice may go to an online service. The plugin itself sends nothing anywhere, except to an online voice you choose (`speak_command`) and through the cloud bridge, if you set them up.
 
-## Installation
+## Quick start
 
 ### 1. The plugin
 
@@ -71,6 +70,12 @@ Then open a new session: it copies the plugin's scripts to `~/Library/Applicatio
 
 System Settings > Accessibility > Spoken Content > **System voice**: pick a voice in your language and its rate.
 
+The default voices sound robotic. For a natural one, click the ⓘ next to *System voice*, search your language and download a voice marked *Premium*, or a Siri voice, then select it. Try it:
+
+```bash
+say "Hello, this is the voice Claude will use."
+```
+
 **An online voice** (optional): `speak_command` points to a script that speaks the text it is given. One for OpenAI ships with the plugin. Add this to `~/.config/claude-speak.json`:
 
 ```json
@@ -82,9 +87,24 @@ System Settings > Accessibility > Spoken Content > **System voice**: pick a voic
 
 Optional: `openai_voice` (default `alloy`), `openai_tts_model` (default `gpt-4o-mini-tts`). Each line costs a round trip, about half a second to a second. If the script fails, `say` reads the line. For another service, copy the script and change the request.
 
-### 4. Shortcuts
+### 4. Check
 
-In the Shortcuts app, create one shortcut per file of [`shortcuts/`](shortcuts) and paste the file's content into the action named on its first line:
+In a new Claude session, type "ask me a question". The question is read, Spokenly opens, you answer, and Claude's reply is read.
+
+Replies and questions now speak. You dictate your own messages with Spokenly's shortcut. To also drive Claude by voice alone, go on with the hands-free setup.
+
+## Hands-free setup
+
+### 5. Shortcuts
+
+Double-click each file of [`shortcuts/import/`](shortcuts/import) (from a clone or a download of this repository) and click "Add Shortcut". Nine shortcuts: Claude Listen, Claude Reply, Claude Session, Stop, Claude Quiet, Claude Continue, Claude Restart, Claude Voice mode on, Claude Voice mode off.
+
+Shortcuts must be allowed to run scripts: Shortcuts > Settings > Advanced > **Allow Running Scripts**. Run each one once from the Shortcuts app and accept the permissions macOS asks for.
+
+<details>
+<summary>Or create them by hand</summary>
+
+One shortcut per file of [`shortcuts/`](shortcuts), with the file's content pasted into the action named on its first line:
 
 | Shortcut | Action | File |
 |---|---|---|
@@ -98,9 +118,9 @@ In the Shortcuts app, create one shortcut per file of [`shortcuts/`](shortcuts) 
 | Claude Voice mode on | Run Shell Script | `voice-on.sh` |
 | Claude Voice mode off | Run Shell Script | `voice-off.sh` |
 
-Run each one once from the Shortcuts app and accept the permissions macOS asks for.
+</details>
 
-### 5. Voice commands
+### 6. Voice commands
 
 System Settings > Accessibility > Voice Control: turn it on, with the **Mac's** microphone. Then Commands… > "+", for each command: "While using: Any Application", "Perform: Run Shortcut".
 
@@ -122,7 +142,7 @@ Switch Voice Control to **command mode** (search "mode" in the command list): ot
 
 To switch sessions by voice, add commands limited to Claude, with "Press Keyboard Shortcut": new session ⌘N, next ⌘⇧], previous ⌘⇧[, search ⌘⇧K.
 
-### 6. Permissions
+### 7. Permissions
 
 System Settings > Privacy & Security > **Accessibility**: enable these, adding them with "+" when missing (⌘⇧G to paste a path):
 
@@ -132,13 +152,7 @@ System Settings > Privacy & Security > **Accessibility**: enable these, adding t
 
 Accept, when asked, control of **System Events** and **microphone** access for Spokenly and Voice Control.
 
-### 7. Check
-
-```bash
-say hello
-```
-
-Then, in a new Claude session: "ask me a question". The question is read, you answer in Spokenly, and the reply that follows is read.
+Check: say "Claude Listen", dictate a message, say "Stop". It goes to the session on screen.
 
 ## Usage
 
@@ -166,6 +180,21 @@ Then open a new session: hooks are only reloaded by a new session. With the brid
 ```bash
 launchctl kickstart -k "gui/$(id -u)/com.handfree-code.bridge"
 ```
+
+## Turning off and uninstalling
+
+To pause it: say "Claude Voice mode off", or type `/vocal off` in Claude. To disable the plugin without removing it: `"handfree-code@handfree-code": false` in `enabledPlugins`, then a new session.
+
+To remove everything:
+
+```bash
+claude plugin uninstall handfree-code@handfree-code
+claude plugin marketplace remove handfree-code
+claude mcp remove --scope user spokenly
+rm -rf ~/Library/Application\ Support/handfree-code ~/Library/Caches/claude-speak ~/.config/claude-speak.json
+```
+
+With the bridge, first `sh handfree-code/bin/install-bridge.sh --uninstall`, then delete the Cloudflare tunnel (`cloudflared tunnel delete <TUNNEL>`) and its rules. Delete the Shortcuts and the Voice Control commands by hand.
 
 ## Cloud sessions: the bridge (optional)
 
@@ -280,7 +309,13 @@ On claude.ai, in the cloud environment's settings:
 
 Optional: `HANDFREE_OVERRIDES` changes a few reading settings for that environment's sessions, in JSON, for instance `{"first_paragraph_only": false, "language": "en"}`. Accepted keys: `language`, `voice`, `validation_word`, `first_paragraph_only`, `pause_between_lines_seconds`, `silence_around_title_ms`. Nothing that would make the Mac run a program.
 
-Your sessions' text and your microphone go through the tunnel: use a provider you trust, and never publish the keys.
+### Security
+
+What the bridge exposes, and what guards it:
+
+- **What gets through**: `/hook` makes the Mac read text aloud; `/mcp` opens a Spokenly dictation and returns what you say. Nothing else: the Mac never runs a program sent by a cloud session (`HANDFREE_OVERRIDES` only accepts reading settings).
+- **Two locks**: Cloudflare refuses any request without `bridge_edge_key`, and the Mac refuses any request without `bridge_token`. The service only listens on `127.0.0.1`: nothing reaches it except through the tunnel.
+- **What travels**: the end of the conversation (to read it and title it) and your dictated answers. Use a tunnel provider you trust, and never publish the keys; if one leaks, change both (see *The bridge on the Mac*).
 
 ### How sessions reach Spokenly
 
@@ -349,12 +384,18 @@ The question hooks match any `mcp__…spokenly…__ask_user_dictation` tool. For
 - **"Claude Listen" clicks the wrong place**: the field is found by its accessibility name. If the app's layout changed, a fallback point is clicked and the field is searched again in the background (about 30 s), for next time.
 - **A cloud session stays silent**: run the checks of *Check from outside*, then read the bridge's log on the Mac (`tail ~/Library/Logs/handfree-bridge.log`) and ask the cloud session for its hooks' log (`cat /tmp/handfree-hook.log`): one line per hook, with its outcome.
 
-## What an update can break
+## Known limitations
 
-- The Claude app may rename its "Prompt" field: the fallback click takes over, and `prompt_name` can be set.
-- "Claude Reply" and "Claude Session" use the app's own links (`claude://code/continue`, `claude://code/search`) and its session files. If they change, "Claude Reply" falls back to the session on screen.
-- Session titles and delegated turns are read from Claude Code's internal transcript format. If it changes, the plugin falls back to the folder name and reads the reply.
-- Pausing music uses a private macOS framework (MediaRemote), restricted since macOS 15.4: there, pausing may stop working. Speaking does not depend on it.
+Checked with Claude Code 2.1.287 and macOS 14.4.1, October 2026.
+
+- **Cloud sessions**: their permission prompts are not asked by voice, the bridge does not carry them. "Claude Reply" cannot open a cloud session.
+- **A session started by another one** is not read: the session that started it relays its result.
+- **One Mac**: the bridge speaks and listens on a single Mac.
+- **Pausing music** relies on a private macOS framework (MediaRemote), restricted since macOS 15.4: there, music may not pause. Speaking does not depend on it.
+- **Undocumented parts of the Claude app and of Claude Code**, which an update may change:
+  - The Claude app may rename its "Prompt" field: the fallback click takes over, and `prompt_name` can be set.
+  - "Claude Reply" and "Claude Session" use the app's own links (`claude://code/continue`, `claude://code/search`) and its session files. If they change, "Claude Reply" falls back to the session on screen.
+  - Session titles and delegated turns are read from Claude Code's internal transcript format. If it changes, the plugin falls back to the folder name and reads the reply.
 
 ## Development
 
@@ -362,6 +403,8 @@ The question hooks match any `mcp__…spokenly…__ask_user_dictation` tool. For
 tests/run.sh
 tests/bridge.sh
 ```
+
+After changing a script of `shortcuts/`, rebuild the importable files: `python3 tools/build-shortcuts.py` (it signs them through Apple; run it again if a signing is turned down).
 
 Silent tests: a fake `say` writes to a file, and state and settings live in a scratch folder. Run them outside Claude Code's sandbox, before every release. "Claude Listen" (click, accessibility) is tested by hand.
 
