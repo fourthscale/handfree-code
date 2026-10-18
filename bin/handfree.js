@@ -6,7 +6,7 @@
 //   --question        PreToolUse on the Spokenly tool: pauses the queue, reads the question, then waits for the dictation
 //   --notify          Notification: queues "Claude needs your answer"
 //   --session-rules   SessionStart: prints the voice rules, refreshes the stable copy the listener and bridge run
-//   --guard-question  PreToolUse on AskUserQuestion and the app's session offer: sends Claude to Spokenly instead
+//   --guard-question  PreToolUse on AskUserQuestion, the app's session offer and end-of-turn question: sends Claude to Spokenly instead
 //   --permission      PermissionRequest: reads the request, answers it from a spoken yes or no (voice_permissions)
 //   --prompt-sent     UserPromptSubmit: a message sent (Return, a click) ends a free dictation that "Stop" did not
 //   --answered        PostToolUse on the Spokenly tool: the answer is in, however it was sent; the queue goes on.
@@ -673,12 +673,20 @@ const SCREEN_ONLY_SESSION_OFFER = {
   en: 'Voice mode is on: this offer waits for a click on screen; the user does not hear it. Ask them with the `{tool}` tool whether they want this task in a new session or here. If they pick a new session, start it (initiation "user_asked"); otherwise do it here.',
 }
 
+const SCREEN_ONLY_END_OF_TURN_QUESTION = {
+  fr: "Mode vocal actif : la question de cette boîte de fin de tour s'affiche seulement à l'écran, l'utilisateur ne l'entend pas. Rappelle l'outil sans `ask` ni `actions` (le résumé seul), puis pose la question avec l'outil `{tool}`.",
+  en: 'Voice mode is on: the question in this end-of-turn box only shows on screen; the user does not hear it. Call the tool again without `ask` or `actions` (the recap alone), then ask the question with the `{tool}` tool.',
+}
+
 function guardScreenOnlyQuestion() {
   const data = readStdin()
   if (!questionsCanBeSpoken() || userIsAway()) return ''
+  const input = data.tool_input || {}
   const offer = /start_session$/.test(data.tool_name || '')
-  if (offer && (data.tool_input || {}).initiation !== 'offer') return '' // a proposal card waits for nobody
-  const reasons = offer ? SCREEN_ONLY_SESSION_OFFER : SCREEN_ONLY_QUESTION
+  if (offer && input.initiation !== 'offer') return '' // a proposal card waits for nobody
+  const endOfTurn = /wrap_up$/.test(data.tool_name || '')
+  if (endOfTurn && !String(input.ask || '').trim()) return '' // a recap alone asks nothing
+  const reasons = offer ? SCREEN_ONLY_SESSION_OFFER : endOfTurn ? SCREEN_ONLY_END_OF_TURN_QUESTION : SCREEN_ONLY_QUESTION
   const reason = (reasons[LANGUAGE] || reasons.en).replace('{tool}', CONFIG.question_tool)
   return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } })
 }

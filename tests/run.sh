@@ -286,6 +286,10 @@ if spokenly_declared; then
   check "the app's session offer is asked through Spokenly" "$out" '"permissionDecision":"deny".*new session or here'
   out=$(printf '{"session_id":"b","tool_name":"mcp__ccd_session__start_session","tool_input":{"initiation":"own_initiative","title":"x"}}' | hf --guard-question)
   check_not "a proposal card waiting for nobody is let through" "$out" "deny"
+  out=$(printf '{"session_id":"b","tool_name":"mcp__ccd_turn__wrap_up","tool_input":{"recap":"Done.","ask":"Commit it?"}}' | hf --guard-question)
+  check "the app's end-of-turn question is asked through Spokenly" "$out" '"permissionDecision":"deny".*recap alone.*mcp__spokenly__ask_user_dictation'
+  out=$(printf '{"session_id":"b","tool_name":"mcp__ccd_turn__wrap_up","tool_input":{"recap":"Done."}}' | hf --guard-question)
+  check_not "an end-of-turn recap alone is let through" "$out" "deny"
   out=$(printf '{"session_id":"b","tool_name":"AskUserQuestion","tool_input":{}}' | HANDFREE_IDLE_SECONDS=3600 sh -c "osascript -l JavaScript '$SCRIPT' --guard-question")
   check_not "away from the Mac, the app's question is let through" "$out" "deny"
   hf --off >/dev/null; out=$(printf '{"session_id":"b","tool_name":"AskUserQuestion","tool_input":{}}' | hf --guard-question); hf --on >/dev/null; reset
