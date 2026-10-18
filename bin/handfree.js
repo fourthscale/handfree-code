@@ -268,7 +268,7 @@ function sendMediaCommand(name) {
 // ---------- state, shared by every process, behind a lock
 
 function emptyState() {
-  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, dictating_session: null, voice_off: false, prompt_path: null, learning_since: null, media_paused: false, last_speech_end: 0, speaker_pid: null }
+  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, dictating_session: null, reading_requested: false, read_before_question: null, voice_off: false, prompt_path: null, learning_since: null, media_paused: false, last_speech_end: 0, speaker_pid: null }
 }
 
 function withState(change) {
@@ -395,7 +395,7 @@ function isDictating(state) {
 }
 
 function startReaderUnlessRunning(state) {
-  if (isAlive(state.reader_pid) || isDictating(state)) return
+  if (isAlive(state.reader_pid) || (isDictating(state) && !state.reading_requested)) return
   state.reader_pid = Number(shell(`osascript -l JavaScript ${quote(scriptPath())} --read >/dev/null 2>&1 & echo $!`)) || null
   state.announced_id = null
 }
@@ -431,8 +431,10 @@ function announcement(title) {
   return `${SILENCE} ${PHRASE.session.replace('{title}', title)} ${SILENCE} `
 }
 
+// While an answer is dictated, only "Continue" or "Restart" read, and only the reply on hold: nothing new starts.
 function nextLineToSay(state) {
-  if (isDictating(state)) return null
+  const onlyCurrent = isDictating(state)
+  if (onlyCurrent && !state.reading_requested) return null
   for (;;) {
     const item = state.current
     if (item && item.position < Math.min(item.pause_at, item.lines.length)) {
@@ -445,7 +447,7 @@ function nextLineToSay(state) {
       item.more_announced = true
       return { id: item.id, text: PHRASE.more, cue: true }
     }
-    if (!state.queue.length) return null
+    if (!state.queue.length || onlyCurrent) return null
     state.current = state.queue.shift()
   }
 }
@@ -456,6 +458,7 @@ function readQueue() {
       const next = nextLineToSay(state)
       if (!next) {
         state.reader_pid = null
+        state.reading_requested = false
         if (!isDictating(state)) resumeMediaIfPaused(state)
       }
       return next
@@ -519,6 +522,12 @@ function queueNewReply() {
   const reply = data.last_assistant_message || lastReply(entries)
   const block = unspokenQuestionBlock(data, entries, reply)
   if (block) return block
+  const alreadyRead = withState((state) => {
+    const before = state.read_before_question
+    if (before && before.session === data.session_id) state.read_before_question = null
+    return Boolean(before && before.session === data.session_id && before.text === reply.trim())
+  })
+  if (alreadyRead) return
   const lines = speakableLines(reply)
   if (!lines.length) lines.push(PHRASE.idle)
   const pauseAt = (CONFIG.first_paragraph_only ? linesThroughFirstParagraph(reply) : 0) || lines.length
@@ -609,8 +618,44 @@ function readQuestion() {
   const questions = (data.tool_input || {}).questions || []
   // The queue stays paused: restarting it would talk over the answer being dictated.
   holdReaderAfterCurrentLine()
-  say(`${introFor(data, entries)}${PHRASE.question} ${SILENCE} ${questions.join(' ')}`)
+  const intro = introFor(data, entries)
+  const before = readTextBeforeQuestion(data, entries, intro)
+  say(`${before ? '' : intro}${PHRASE.question} ${SILENCE} ${questions.join(' ')}`)
   startDictating(data.session_id)
+}
+
+// What Claude wrote just before asking is part of its answer: its turn has not ended, so no reply reading will
+// come. Its first paragraph is read before the question; the rest becomes the reply "Continue" reads.
+function readTextBeforeQuestion(data, entries, intro) {
+  const text = textOfLastMessage(entries)
+  if (!text) return ''
+  const lines = speakableLines(text)
+  if (!lines.length) return ''
+  const pauseAt = (CONFIG.first_paragraph_only ? linesThroughFirstParagraph(text) : 0) || lines.length
+  lines.slice(0, pauseAt).forEach((line, i) => {
+    say(`${i === 0 ? intro : ''}${line}`)
+    delay(CONFIG.pause_between_lines_seconds)
+  })
+  if (pauseAt < lines.length) say(PHRASE.more)
+  withState((state) => {
+    state.current = { id: state.next_id, session: data.session_id, title: sessionTitle(entries, data.cwd), lines, position: pauseAt, pause_at: pauseAt, more_announced: true }
+    state.announced_id = state.next_id
+    state.next_id += 1
+    state.read_before_question = { session: data.session_id, text: text.trim() }
+  })
+  return text
+}
+
+// The text blocks of the message that carries the question (they are written to the transcript before the call).
+function textOfLastMessage(entries) {
+  let last = null
+  for (let i = entries.length - 1; i >= 0 && !last; i--) if (entries[i].type === 'assistant') last = entries[i]
+  const id = last && (last.message || {}).id
+  if (!id) return ''
+  return entries
+    .filter((e) => e.type === 'assistant' && (e.message || {}).id === id)
+    .flatMap((e) => ((e.message || {}).content || []).filter((b) => b && b.type === 'text' && (b.text || '').trim()).map((b) => b.text))
+    .join('\n')
 }
 
 function printSessionRules() {
@@ -666,6 +711,7 @@ function startDictating(session) {
     killReader(state)
     state.dictating_since = now()
     state.dictating_session = session || null
+    state.reading_requested = false
   })
 }
 
@@ -695,6 +741,7 @@ function holdReaderAfterCurrentLine() {
 function resume() {
   withState((state) => {
     if (state.current) state.current.pause_at = state.current.lines.length
+    state.reading_requested = true
     startReaderUnlessRunning(state)
   })
 }
@@ -703,6 +750,7 @@ function restart() {
   withState((state) => {
     killReader(state)
     if (state.current) Object.assign(state.current, { position: 0, pause_at: state.current.lines.length })
+    state.reading_requested = true
     startReaderUnlessRunning(state)
   })
 }

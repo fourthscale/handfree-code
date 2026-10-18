@@ -86,6 +86,20 @@ check_not "another session's turn end does not cut a question short" "$(said)" "
 reply b 'Question refused, turn over.'; wait_quiet 2.5
 check "the asking session's turn end frees the reading, though no answer came" "$(said)" "Question refused, turn over"
 
+# Text written just before a question: read before it, its rest on "Continue", not read again at the turn's end.
+transcript q 'Quiz'
+printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"Intro para.\\n\\nMore para."}]}}\n' >> "$WORK/q.jsonl"
+reset; printf '{"session_id":"q","transcript_path":"%s/q.jsonl","tool_input":{"questions":["Which one?"]}}' "$WORK" | hf --question >/dev/null
+check "the text before a question is read first" "$(said | tr '\n' ' ')" "Intro para.*There is more.*A question.*Which one"
+check_not "only its first paragraph" "$(said)" "More para"
+hf --resume >/dev/null; wait_quiet 1.5
+check "Continue reads the rest while the answer is awaited" "$(said)" "More para"
+printf '{"session_id":"q"}' | hf --answered >/dev/null
+reset; reply q 'Intro para.\n\nMore para.'; wait_quiet 1.5
+check_not "the same text is not read again at the turn's end" "$(said)" "Intro para"
+reply q 'Final words.'; wait_quiet 1.5
+check "a new reply is read" "$(said)" "Final words"
+
 reset; printf '{"type":"user","turnOrigin":"sdk","message":{"content":"Background (from the session that started this one): x"}}\n' >> "$WORK/b.jsonl"
 reply b 'Delegated task.'; sleep 1
 check_not "a turn delegated by another session is not read" "$(said)" "Delegated task"

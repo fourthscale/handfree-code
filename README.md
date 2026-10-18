@@ -178,7 +178,7 @@ Check: say "Claude Listen", dictate a message, say "Stop". It goes to the sessio
 - **Claude Listen** → dictate → **Stop**: the message goes to the session on screen, wherever you were.
 - **Claude Reply** → dictate → **Stop**: the message goes to the session that spoke last, even if another one is on screen. A cloud session cannot be opened this way: the session on screen gets it.
 - **Claude Session** → say a session's name → **Stop**: that session opens. Then **Claude Listen**.
-- **A question**: it is read ("Session X. A question. …"), you answer, **Stop** or Enter sends. The answer goes back to the session that asked.
+- **A question**: what Claude wrote just before it is read first (its first paragraph), then the question ("A question. …"). You answer, **Stop** or Enter sends; the answer goes back to the session that asked. **Claude Continue** reads the rest of that text even while the question waits.
 - **A reply**: the first paragraph is read, then "There is more" if text remains. **Claude Continue** reads the rest, **Claude Restart** reads it all again, **Claude Quiet** cuts it (say it between two lines).
 - **Several sessions**: readings wait their turn. A session's name is said when the speaker changes. Nothing is read while you dictate.
 - **Music or a video**: paused while Claude speaks, resumed afterwards. Only the app the keyboard's play/pause key drives; if nothing plays, nothing is touched.
