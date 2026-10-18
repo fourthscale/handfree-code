@@ -10,7 +10,8 @@ chmod +x "$ROOT/tests/fake-say.sh"
 FAILS=0
 
 configure() { printf '{"say_path": "%s", "language": "en", "announce_session": "always", "pause_between_lines_seconds": 0.1, "silence_around_title_ms": 1%s}\n' "$ROOT/tests/fake-say.sh" "${1:-}" > "$HANDFREE_CONFIG"; }
-hf() { HANDFREE_IDLE_SECONDS=${HANDFREE_IDLE_SECONDS:-0} HANDFREE_AUDIO_PLAYING=${HANDFREE_AUDIO_PLAYING:-0} osascript -l JavaScript "$SCRIPT" "$@"; }
+# The Now Playing answer is unknown by default: the tests then go through the audio-signal fallback.
+hf() { HANDFREE_IDLE_SECONDS=${HANDFREE_IDLE_SECONDS:-0} HANDFREE_AUDIO_PLAYING=${HANDFREE_AUDIO_PLAYING:-0} HANDFREE_NOW_PLAYING=${HANDFREE_NOW_PLAYING:-unknown} osascript -l JavaScript "$SCRIPT" "$@"; }
 transcript() { printf '{"type":"custom-title","customTitle":"%s"}\n' "$2" > "$WORK/$1.jsonl"; }
 reply() { printf '{"session_id":"%s","transcript_path":"%s/%s.jsonl","last_assistant_message":"%s"}' "$1" "$WORK" "$1" "$2" | hf >/dev/null; }
 said() { cat "$HANDFREE_SAY_LOG" 2>/dev/null; }
@@ -210,6 +211,12 @@ printf '{"session_id":"b","transcript_path":"%s/b.jsonl","tool_input":{"question
 check "a question pauses the music too" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^pause $"
 hf --done >/dev/null; wait_quiet 1.5
 check "and the answer given, the music resumes" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^pause play $"
+rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
+HANDFREE_NOW_PLAYING=0 HANDFREE_AUDIO_PLAYING=1 reply a 'Music just stopped.'; wait_quiet 2
+check "music the user just stopped is left alone, though audio still shows" "[$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null)]" "\[\]"
+reply a 'Right after our voice.'; wait_quiet 2
+HANDFREE_NOW_PLAYING=1 reply a 'Music started meanwhile.'; wait_quiet 2
+check "the Now Playing app's answer needs no wait after our own voice" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^pause play $"
 unset HANDFREE_MEDIA_KEY_LOG
 
 printf '{"version": 0, "queue": [{"bogus": true}]}' > "$HANDFREE_STATE_DIR/state.json"

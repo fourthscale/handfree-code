@@ -194,16 +194,34 @@ function speakWith(path, args) {
 
 // ---------- pausing what plays while speaking
 
-// macOS keeps reporting audio about ten seconds after it stops: within that window, the sound may be our own voice.
-const AUDIO_SIGNAL_LINGER_SECONDS = 12
 // MediaRemote commands sent to the Now Playing app, the one the keyboard's play/pause key drives.
 // A synthetic media key does not work from osascript: the event it builds reaches nobody.
 const MEDIA_COMMAND = { play: 0, pause: 1 }
 const MEDIA_COMMAND_SEND_SECONDS = 0.5 // the command leaves asynchronously: the process must outlive it
+// The fallback below sees audio about ten seconds after it stops: within that window, it may be our own voice.
+const AUDIO_SIGNAL_LINGER_SECONDS = 12
 
-// coreaudiod holds an assertion per device in use, naming the process it serves; inputs are marked audio-in.
-// Older macOS mark outputs audio-out, macOS 14 only names the device: anything not audio-in is an output.
-function audioIsPlaying() {
+function loadMediaRemote() {
+  $.NSBundle.bundleWithPath('/System/Library/PrivateFrameworks/MediaRemote.framework').load
+}
+
+// Asked of the Now Playing app itself: paused a second ago is paused. null when this macOS cannot say.
+function nowPlayingIsPlaying() {
+  if (ENV.HANDFREE_NOW_PLAYING) return { 1: true, 0: false }[ENV.HANDFREE_NOW_PLAYING] ?? null
+  try {
+    loadMediaRemote()
+    const request = $.NSClassFromString('MRNowPlayingRequest')
+    if (request.isNil() || !request.respondsToSelector('localIsPlaying')) return null
+    return Boolean(request.localIsPlaying)
+  } catch (e) {
+    return null
+  }
+}
+
+// Fallback: coreaudiod holds an assertion per device in use, naming the process it serves; inputs are marked
+// audio-in. Older macOS mark outputs audio-out, macOS 14 only names the device: anything not audio-in is an output.
+function audioOutputInUse(state) {
+  if (now() - state.last_speech_end < AUDIO_SIGNAL_LINGER_SECONDS) return false
   if (ENV.HANDFREE_AUDIO_PLAYING) return ENV.HANDFREE_AUDIO_PLAYING === '1'
   const pids = [...shell('pmset -g assertions').matchAll(/Created for PID: (\d+)\.?\s*[\r\n]\s*Resources: (?!audio-in)/g)].map((m) => m[1])
   if (!pids.length) return false
@@ -211,11 +229,16 @@ function audioIsPlaying() {
   return shell(`ps -o comm= -p ${pids.join(',')}; true`).split(/[\r\n]+/).some((command) => command.trim() && !/(^|\/)say$/.test(command.trim()))
 }
 
+function mediaIsPlaying(state) {
+  const playing = nowPlayingIsPlaying()
+  return playing === null ? audioOutputInUse(state) : playing
+}
+
 // Paused only when something plays, never on a doubt: resuming afterwards must not start what the user had stopped.
 function pauseMediaIfPlaying() {
   if (!CONFIG.pause_media) return
   withState((state) => {
-    if (state.media_paused || now() - state.last_speech_end < AUDIO_SIGNAL_LINGER_SECONDS || !audioIsPlaying()) return
+    if (state.media_paused || !mediaIsPlaying(state)) return
     sendMediaCommand('pause')
     state.media_paused = true
   })
@@ -230,7 +253,7 @@ function resumeMediaIfPaused(state) {
 function sendMediaCommand(name) {
   if (ENV.HANDFREE_MEDIA_KEY_LOG) return writeFile(ENV.HANDFREE_MEDIA_KEY_LOG, (readFile(ENV.HANDFREE_MEDIA_KEY_LOG) || '') + name + '\n')
   try {
-    $.NSBundle.bundleWithPath('/System/Library/PrivateFrameworks/MediaRemote.framework').load
+    loadMediaRemote()
     ObjC.bindFunction('MRMediaRemoteSendCommand', ['bool', ['int', 'id']])
     $.MRMediaRemoteSendCommand(MEDIA_COMMAND[name], $())
     $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(MEDIA_COMMAND_SEND_SECONDS))
