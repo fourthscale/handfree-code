@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.request
 
 TRANSCRIPT_TAIL_LINES = 400
@@ -72,6 +73,11 @@ def main():
             output = response.read().decode("utf-8")
             sys.stdout.write(output)
             log(command, f"HTTP {response.status}, {len(output)} bytes back")
+    except urllib.error.HTTPError as error:
+        # Who refused: the tunnel's edge, a proxy on the way, or the Mac. The body is the refusal page, not ours.
+        detail = error.read(300).decode("utf-8", "replace").replace("\n", " ")
+        log(command, f"failed: HTTP {error.code}, server {error.headers.get('server', '?')}, {len(payload['transcript_tail'])} transcript lines: {detail}")
+        sys.stderr.write(f"handfree bridge refused: HTTP {error.code}\n")
     except Exception as error:  # an unreachable Mac must never break the session
         log(command, f"failed: {type(error).__name__}: {error}")
         sys.stderr.write(f"handfree bridge unreachable: {error}\n")
