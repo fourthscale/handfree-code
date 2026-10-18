@@ -150,6 +150,13 @@ wait
 check "then it is asked" "$(said | tr '\n' ' ')" "Question from X.*Question from Y"
 printf '{"session_id":"y"}' | hf --answered >/dev/null
 
+# A cloud session has no title in its transcript: "cloud" and its folder's name.
+printf '{"type":"user","message":{"content":"Corrige le bug."}}\n' > "$WORK/c.jsonl"
+reset; printf '{"session_id":"c","cwd":"/work/project","transcript_path":"%s/c.jsonl","last_assistant_message":"Done in the cloud."}' "$WORK" | HANDFREE_CONTEXT=cloud hf >/dev/null; wait_quiet 1.5
+check "a cloud session is named cloud and its project" "$(said)" "Session cloud project"
+reset; printf '{"session_id":"c2","cwd":"/work/project","transcript_path":"%s/c.jsonl","last_assistant_message":"Done locally."}' "$WORK" | hf >/dev/null; wait_quiet 1.5
+check_not "a local one without a title is its folder's name only" "$(said)" "cloud"
+
 # The same text written in the message and copied into the question is read once.
 transcript d 'Dup'
 printf '{"type":"assistant","message":{"id":"m3","content":[{"type":"text","text":"Same intro."}]}}\n' >> "$WORK/d.jsonl"
@@ -366,6 +373,20 @@ rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
 rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
 HANDFREE_AUDIO_PLAYING=0 reply a 'In silence.'; wait_quiet 2
 check "nothing playing: nothing is sent" "[$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null)]" "\[\]"
+# macOS 15.4 and later: media-control, when installed, reads and drives what plays (here a fake one).
+printf '#!/bin/sh\necho "$1" >> "%s/media-control.log"\n[ "$1" = get ] && cat "%s/now-playing.json"\nexit 0\n' "$WORK" "$WORK" > "$WORK/media-control"
+chmod +x "$WORK/media-control"
+with_media_control() { printf '{"session_id":"a","transcript_path":"%s/a.jsonl","last_assistant_message":"%s"}' "$WORK" "$1" \
+  | env -u HANDFREE_NOW_PLAYING HANDFREE_MEDIA_KEY_LOG= HANDFREE_MEDIA_CONTROL="$WORK/media-control" HANDFREE_IDLE_SECONDS=0 HANDFREE_AUDIO_PLAYING=0 \
+    osascript -l JavaScript "$SCRIPT" >/dev/null; }
+rm -f "$HANDFREE_STATE_DIR/state.json" "$WORK/media-control.log"
+echo '{"playing": true, "title": "A video"}' > "$WORK/now-playing.json"
+with_media_control 'Over the video.'; wait_quiet 2
+check "media-control: what plays is paused, then resumed" "$(grep -v get "$WORK/media-control.log" 2>/dev/null | tr '\n' ' ')" "^pause play $"
+rm -f "$HANDFREE_STATE_DIR/state.json" "$WORK/media-control.log"
+echo null > "$WORK/now-playing.json"
+with_media_control 'Nothing playing.'; wait_quiet 2
+check "media-control: nothing playing, nothing sent" "[$(grep -v get "$WORK/media-control.log" 2>/dev/null)]" "\[\]"
 reply a 'Right after.'; wait_quiet 2
 HANDFREE_AUDIO_PLAYING=1 reply a 'Own voice still reported.'; wait_quiet 2
 check "our own voice is not taken for music" "[$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null)]" "\[\]"

@@ -48,6 +48,7 @@ const DEFAULTS = {
   silence_around_title_ms: 800,
   announce_session: 'on_change', // or 'always': before every reply, question and resumed reading
   pause_media: true, // pause the Now Playing app (music, YouTube…) while speaking, resume afterwards
+  media_control: null, // null: media-control used when installed (needed from macOS 15.4); a path to it; false never
   max_dictation_seconds: 180, // a dictation abandoned without "Stop" frees the reader after this
   first_paragraph_only: true, // the rest waits for "Continue"
   summarize_rest: true, // answering "the rest" to a question: a summary first, "the details" for the full text
@@ -76,9 +77,9 @@ const DEFAULTS = {
 }
 
 const PHRASES = {
-  fr: { session: 'Session {title}.', question: 'Une question.', link: 'lien', code: 'Bloc de code omis.', more: 'Détail disponible.', detail: 'Pour tout entendre, réponds « le détail ».', dictate: 'Ton message pour Claude.', not_sent: 'Message pas envoyé : il attend dans Claude.', voice_on: 'Mode vocal activé.', voice_off: 'Mode vocal désactivé.', permission: 'Autorisation demandée : {action}. Autoriser ?', idle: "Claude t'attend", waiting: 'Claude attend ta réponse' },
-  en: { session: 'Session {title}.', question: 'A question.', link: 'link', code: 'Code block skipped.', more: 'Details available.', detail: 'To hear it all, answer "the details".', dictate: 'Your message for Claude.', not_sent: 'Message not sent: it is waiting in Claude.', voice_on: 'Voice mode on.', voice_off: 'Voice mode off.', permission: 'Permission requested: {action}. Allow?', idle: 'Claude is waiting', waiting: 'Claude needs your answer' },
-  de: { session: 'Sitzung {title}.', question: 'Eine Frage.', link: 'Link', code: 'Codeblock ausgelassen.', more: 'Details verfügbar.', detail: 'Um alles zu hören, antworte „die Details“.', dictate: 'Deine Nachricht an Claude.', not_sent: 'Nachricht nicht gesendet: sie wartet in Claude.', voice_on: 'Sprachmodus an.', voice_off: 'Sprachmodus aus.', permission: 'Erlaubnis angefragt: {action}. Erlauben?', idle: 'Claude wartet', waiting: 'Claude wartet auf deine Antwort' },
+  fr: { session: 'Session {title}.', question: 'Une question.', link: 'lien', code: 'Bloc de code omis.', more: 'Détail disponible.', detail: 'Pour tout entendre, réponds « le détail ».', dictate: 'Ton message pour Claude.', cloud: 'cloud', not_sent: 'Message pas envoyé : il attend dans Claude.', voice_on: 'Mode vocal activé.', voice_off: 'Mode vocal désactivé.', permission: 'Autorisation demandée : {action}. Autoriser ?', idle: "Claude t'attend", waiting: 'Claude attend ta réponse' },
+  en: { session: 'Session {title}.', question: 'A question.', link: 'link', code: 'Code block skipped.', more: 'Details available.', detail: 'To hear it all, answer "the details".', dictate: 'Your message for Claude.', cloud: 'cloud', not_sent: 'Message not sent: it is waiting in Claude.', voice_on: 'Voice mode on.', voice_off: 'Voice mode off.', permission: 'Permission requested: {action}. Allow?', idle: 'Claude is waiting', waiting: 'Claude needs your answer' },
+  de: { session: 'Sitzung {title}.', question: 'Eine Frage.', link: 'Link', code: 'Codeblock ausgelassen.', more: 'Details verfügbar.', detail: 'Um alles zu hören, antworte „die Details“.', dictate: 'Deine Nachricht an Claude.', cloud: 'Cloud', not_sent: 'Nachricht nicht gesendet: sie wartet in Claude.', voice_on: 'Sprachmodus an.', voice_off: 'Sprachmodus aus.', permission: 'Erlaubnis angefragt: {action}. Erlauben?', idle: 'Claude wartet', waiting: 'Claude wartet auf deine Antwort' },
 }
 
 const SESSION_RULES = {
@@ -259,6 +260,16 @@ const MEDIA_COMMAND_SEND_SECONDS = 0.5 // the command leaves asynchronously: the
 // The fallback below sees audio about ten seconds after it stops: within that window, it may be our own voice.
 const AUDIO_SIGNAL_LINGER_SECONDS = 12
 
+// macOS 15.4 and later keep MediaRemote to Apple's own programs: there, `media-control` (brew install media-control),
+// when installed, reads and drives what plays instead. Without it, MediaRemote as before (fine up to macOS 15.3).
+function mediaControl() {
+  if (ENV.HANDFREE_MEDIA_CONTROL !== undefined) return ENV.HANDFREE_MEDIA_CONTROL
+  const configured = CONFIG.media_control
+  if (configured === false) return ''
+  const candidates = configured ? [configured] : ['/opt/homebrew/bin/media-control', '/usr/local/bin/media-control']
+  return candidates.find((path) => shell(`test -x ${quote(path)} && echo yes`) === 'yes') || ''
+}
+
 function loadMediaRemote() {
   $.NSBundle.bundleWithPath('/System/Library/PrivateFrameworks/MediaRemote.framework').load
 }
@@ -266,6 +277,15 @@ function loadMediaRemote() {
 // Asked of the Now Playing app itself: paused a second ago is paused. null when this macOS cannot say.
 function nowPlayingIsPlaying() {
   if (ENV.HANDFREE_NOW_PLAYING) return { 1: true, 0: false }[ENV.HANDFREE_NOW_PLAYING] ?? null
+  const tool = mediaControl()
+  if (tool) {
+    // `get` prints the Now Playing app's state as JSON, or null when nothing has one.
+    const output = shell(`${quote(tool)} get 2>/dev/null`)
+    if (output === 'null') return false
+    try {
+      return Boolean(JSON.parse(output).playing)
+    } catch (e) {} // an unreadable answer: MediaRemote, then the audio signal, decide
+  }
   try {
     loadMediaRemote()
     const request = $.NSClassFromString('MRNowPlayingRequest')
@@ -313,6 +333,8 @@ function resumeMediaIfPaused(state) {
 
 function sendMediaCommand(name) {
   if (ENV.HANDFREE_MEDIA_KEY_LOG) return writeFile(ENV.HANDFREE_MEDIA_KEY_LOG, (readFile(ENV.HANDFREE_MEDIA_KEY_LOG) || '') + name + '\n')
+  const tool = mediaControl()
+  if (tool) return shell(`${quote(tool)} ${name === 'pause' ? 'pause' : 'play'} 2>/dev/null; true`)
   try {
     loadMediaRemote()
     ObjC.bindFunction('MRMediaRemoteSendCommand', ['bool', ['int', 'id']])
@@ -402,9 +424,13 @@ function startedByAnotherSession(entries) {
   return false
 }
 
+// The title Claude Code keeps for a session, else its folder's name. A cloud session has no title in its transcript (it
+// lives on claude.ai): "cloud" before the folder's name tells where it runs.
 function sessionTitle(entries, cwd) {
   const titles = entries.filter((e) => e.type === 'custom-title' && e.customTitle).map((e) => e.customTitle)
-  return titles.length ? titles[titles.length - 1] : (cwd || '').split('/').pop() || '?'
+  if (titles.length) return titles[titles.length - 1]
+  const folder = (cwd || '').split('/').pop() || '?'
+  return CONTEXT === 'cloud' ? `${PHRASE.cloud} ${folder}` : folder
 }
 
 // ---------- turning markdown into speakable lines

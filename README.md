@@ -13,6 +13,7 @@ Setup comes in two parts: a **quick start** (5 minutes) that reads Claude aloud 
 - macOS 14 or later (tested on 14.4.1). The plugin relies on what macOS ships (`osascript`, `say`). The spoken commands and the optional cloud bridge also need `/usr/bin/python3` (`xcode-select --install` if it is missing).
 - The Claude desktop app and the `claude` command line; tested with Claude Code 2.1.287 (`claude --version`). Claude Code in a terminal works too: see `target_app` in *Settings*.
 - [Spokenly](https://spokenly.app); the free tier is enough.
+- On macOS 15.4 or later, [media-control](https://github.com/ungive/media-control) (`brew install media-control`) for music and videos to pause while Claude speaks. The listener's installer installs it when Homebrew is there. Earlier versions need nothing.
 - Headphones, preferably: the microphone then hears you, not the reading voice. Without them it still works: while Claude speaks, only "Quiet", "Continue" and "Restart" are listened for, and not when the text being read says them.
 
 **Privacy.** Depending on the model chosen in Spokenly, your voice may go to an online service. The spoken commands are recognized on the Mac, offline, and no sound is kept. The plugin itself sends nothing anywhere, except to an online voice you choose (`speak_command`) and through the cloud bridge, if you set them up.
@@ -348,6 +349,7 @@ All optional, in `~/.config/claude-speak.json`:
 | `silence_around_title_ms` | `800` | silence around the session's name |
 | `announce_session` | `on_change` | say the session's name when the speaker changes, or `always` |
 | `pause_media` | `true` | pause what plays while speaking |
+| `media_control` | `null` | media-control is used when installed (needed from macOS 15.4); a path to it, or `false` to never use it |
 | `max_dictation_seconds` | `180` | after a dictation never sent, reading and the other commands resume |
 | `question_tool` | `mcp__spokenly__ask_user_dictation` | questions tool named in the voice rules |
 | `target_app` | `Claude` | app "Claude Listen" brings forward; `iTerm2` or `Terminal` for a terminal |
@@ -386,11 +388,11 @@ The question hooks match any `mcp__…spokenly…__ask_user_dictation` tool. For
 
 Checked with Claude Code 2.1.287 and macOS 14.4.1, October 2026.
 
-- **Cloud sessions**: their permission prompts are not asked by voice, the bridge does not carry them. "Claude Reply" cannot open a cloud session.
+- **Cloud sessions**: their permission prompts are not asked by voice, the bridge does not carry them. "Claude Reply" cannot open a cloud session. They are announced as "cloud" and the project's name: a cloud session's title lives on claude.ai only, neither in its transcript nor in the app's files on the Mac.
 - **A session started by another one** is not read: the session that started it relays its result.
 - **One Mac**: the bridge speaks and listens on a single Mac.
 - **The listener** runs in the Python of Apple's developer tools: an update of them may replace that app, and its Accessibility permission must then be given again. Its small speech models know common words only: a phrase you choose must use them.
-- **Pausing music** relies on a private macOS framework (MediaRemote), restricted since macOS 15.4: there, music may not pause. Speaking does not depend on it.
+- **Pausing music** relies on a private macOS framework (MediaRemote), restricted since macOS 15.4: there, it goes through [media-control](https://github.com/ungive/media-control) when installed (`brew install media-control`), and without it music may not pause. Speaking does not depend on it.
 - **Undocumented parts of the Claude app and of Claude Code**, which an update may change:
   - The Claude app may rename its "Prompt" field: the fallback click takes over, and `prompt_name` can be set.
   - "Claude Reply" and "Claude Session" use the app's own links (`claude://code/continue`, `claude://code/search`) and its session files. If they change, "Claude Reply" falls back to the session on screen.

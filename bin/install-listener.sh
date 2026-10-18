@@ -30,6 +30,19 @@ if ! "$VENV/bin/python" -c "import vosk, sounddevice" 2>/dev/null; then
   "$VENV/bin/pip" install --quiet --disable-pip-version-check vosk sounddevice
 fi
 
+# From macOS 15.4, only Apple's programs may read and drive what plays: media-control does it for the plugin, which
+# pauses your music or video while it speaks. Earlier versions need nothing.
+MACOS=$(sw_vers -productVersion)
+if [ "$(printf '%s\n' 15.4 "$MACOS" | sort -t. -k1,1n -k2,2n | head -1)" = 15.4 ] \
+  && ! [ -x /opt/homebrew/bin/media-control ] && ! [ -x /usr/local/bin/media-control ]; then
+  if command -v brew >/dev/null 2>&1; then
+    echo "Installing media-control (pauses what plays while Claude speaks, on macOS $MACOS)…"
+    brew install --quiet media-control || echo "media-control did not install: music and videos will not pause. Try  brew install media-control"
+  else
+    echo "On macOS $MACOS, music and videos pause while Claude speaks only with media-control: install Homebrew, then  brew install media-control"
+  fi
+fi
+
 [ "$HERE" = "$SUPPORT" ] || cp "$HERE/listener.py" "$SUPPORT/listener.py"
 [ -f "$SUPPORT/handfree.js" ] || cp "$HERE/handfree.js" "$SUPPORT/handfree.js"
 

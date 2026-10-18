@@ -100,4 +100,4 @@ A cloud session runs the same hooks on Linux: `hook.sh` hands them to `cloud-hoo
 - **`doShellScript`** returns lines separated by `\r`, not `\n`.
 - **Hooks** are loaded when a session starts: test a change in a new session.
 - **The sandbox** blocks `~/Library/Caches/claude-speak/`: the plugin's commands and the tests run outside it.
-- **MediaRemote** (pausing music) is a private framework, restricted since macOS 15.4.
+- **MediaRemote** (pausing music) is a private framework, restricted since macOS 15.4. There, `media-control` (Homebrew) is used when installed: `media-control get` gives `"playing"` in JSON (`null` when nothing has a Now Playing state), `pause` and `play` drive it. Up to 15.3, MediaRemote is called directly.
