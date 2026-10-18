@@ -33,12 +33,25 @@ def edge_key_header():
     return {EDGE_KEY_HEADER: key} if key else {}
 
 
+def trim_log(path, max_bytes=200_000, kept_lines=500):
+    """Past max_bytes, a log keeps only its last lines: it never fills the disk."""
+    try:
+        if os.path.getsize(path) > max_bytes:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                kept = f.readlines()[-kept_lines:]
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines(kept)
+    except OSError:
+        pass
+
+
 def log(command, outcome):
     try:
         with open(LOG_PATH, "a", encoding="utf-8") as f:
             f.write(f"{time.strftime('%H:%M:%S')} {command or 'stop'}: {outcome}\n")
     except OSError:
         pass
+    trim_log(LOG_PATH)
 
 
 def main():

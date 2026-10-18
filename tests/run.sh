@@ -343,6 +343,9 @@ rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
 HANDFREE_AUDIO_PLAYING=1 reply a 'Over the music.'; wait_quiet 2
 check "music playing: paused before speaking, resumed after" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^pause play $"
 rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
+HANDFREE_AUDIO_PLAYING=1 hf --dictating >/dev/null; HANDFREE_AUDIO_PLAYING=0 hf --done >/dev/null; wait_quiet 1.5
+check "a dictation pauses the music, Stop resumes it" "$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null | tr '\n' ' ')" "^pause play $"
+rm -f "$HANDFREE_STATE_DIR/state.json" "$HANDFREE_MEDIA_KEY_LOG"
 HANDFREE_AUDIO_PLAYING=0 reply a 'In silence.'; wait_quiet 2
 check "nothing playing: nothing is sent" "[$(cat "$HANDFREE_MEDIA_KEY_LOG" 2>/dev/null)]" "\[\]"
 reply a 'Right after.'; wait_quiet 2
@@ -442,6 +445,34 @@ check_not "dictate_behind false: as before" "$(cat "$HANDFREE_OPEN_LOG" 2>/dev/n
 configure
 unset HANDFREE_PROJECTS_DIR HANDFREE_RETURN_WAIT_SECONDS
 unset HANDFREE_OPEN_LOG HANDFREE_APP_SESSIONS_DIR HANDFREE_FRONT_APP HANDFREE_PROMPT_REACHABLE
+
+# The spoken-commands listener: what it does with what it hears, in each state of the plugin.
+LISTENER="$ROOT/bin/listener.py"
+lstate() { printf '%s' "$1" > "$HANDFREE_STATE_DIR/state.json"; }
+lcheck() { HANDFREE_CONFIG="$HANDFREE_CONFIG" HANDFREE_STATE_DIR="$HANDFREE_STATE_DIR" /usr/bin/python3 "$LISTENER" --check "$1"; }
+printf '{"language": "fr"}' > "$HANDFREE_CONFIG"
+lstate '{}'
+check "listener: a command said alone runs" "$(lcheck 'Claude écoute')" "^listen$"
+check "listener: inside a sentence it does not" "$(lcheck 'je pense que claude écoute')" "^none"
+lwords() { HANDFREE_CONFIG="$HANDFREE_CONFIG" /usr/bin/python3 "$LISTENER" --check-words "$1"; }
+check "listener: a noise then a pause then the command: it counts" "$(lwords '[["[unk]",0.0,0.3],["claude",0.9,1.2],["écoute",1.2,1.6]]')" "^claude écoute$"
+check "listener: the command run into a sentence does not" "$(lwords '[["[unk]",0.0,0.3],["claude",0.35,0.6],["écoute",0.6,0.9],["[unk]",0.95,1.2]]')" "^none$"
+check "listener: stop with no dictation does nothing" "$(lcheck 'stop')" "^none"
+lstate "{\"dictating_since\": $(date +%s)}"
+check "listener: during a dictation, stop sends it" "$(lcheck 'stop')" "^stop$"
+check "listener: and nothing else runs" "$(lcheck 'claude écoute')" "^none"
+lstate "{\"speaker_pid\": $$, \"current\": {\"lines\": [\"Il dit claude continue ici.\"]}}"
+check "listener: while speaking, quiet works" "$(lcheck 'claude tais-toi')" "^quiet$"
+check "listener: but not listen" "$(lcheck 'claude écoute')" "^none"
+check "listener: nor a command that is in the text being read" "$(lcheck 'claude continue')" "^none"
+lstate '{"speaker_pid": 999999, "current": {"lines": ["claude continue"]}}'
+check "listener: a voice noted but gone does not count as speaking" "$(lcheck 'claude écoute')" "^listen$"
+lstate '{"voice_off": true}'
+check "listener: voice mode off, only voice mode on" "$(lcheck 'claude mode vocal activé')" "^voice_on$"
+check_not "listener: nothing else" "$(lcheck 'claude écoute')" "^listen"
+printf '{"language": "fr", "voice_commands": {"Claude Listen": "claude écoute moi"}}' > "$HANDFREE_CONFIG"; lstate '{}'
+check "listener: a phrase chosen in voice_commands is used" "$(lcheck 'claude écoute moi')" "^listen$"
+rm -f "$HANDFREE_STATE_DIR/state.json"; configure
 
 hf --off >/dev/null 2>&1
 rm -rf "$WORK"

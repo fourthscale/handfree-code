@@ -5,12 +5,12 @@
 //   (none)            Stop: queues the new reply (stdin)
 //   --question        PreToolUse on the Spokenly tool: pauses the queue, reads the question, then waits for the dictation
 //   --notify          Notification: queues "Claude needs your answer"
-//   --session-rules   SessionStart: prints the voice rules, refreshes the stable copy the Shortcuts call
+//   --session-rules   SessionStart: prints the voice rules, refreshes the stable copy the listener and bridge run
 //   --guard-question  PreToolUse on AskUserQuestion and the app's session offer: sends Claude to Spokenly instead
 //   --permission      PermissionRequest: reads the request, answers it from a spoken yes or no (voice_permissions)
 //   --answered        PostToolUse on the Spokenly tool: the answer is in, however it was sent; the queue goes on.
 //                     Answered "the rest": the rest of the text before the question is read, and Claude asks again
-// Voice commands (macOS Shortcuts)
+// Spoken commands (bin/listener.py runs them)
 //   --listen          "Claude Listen": silence, bring the app forward, click its message field, start Spokenly
 //   --reply           "Claude Reply": the same, in the session that spoke last
 //   --search-session  "Claude Session": open the app's session search and start Spokenly; "Stop" opens the one named
@@ -33,6 +33,7 @@ const STATE_PATH = `${STATE_DIR}/state.json`
 const LOCK_PATH = `${STATE_DIR}/state.lock`
 const SPEECH_LOCK_PATH = `${STATE_DIR}/speech.lock`
 const STABLE_COPY = `${HOME}/Library/Application Support/handfree-code/handfree.js`
+const LISTENER_LABEL = 'com.handfree-code.listener'
 // Where the Claude app keeps its Code sessions, one local_<id>.json each, naming the Claude Code session it runs.
 const APP_SESSIONS_DIR = ENV.HANDFREE_APP_SESSIONS_DIR || `${HOME}/Library/Application Support/Claude/claude-code-sessions`
 
@@ -41,14 +42,14 @@ const DEFAULTS = {
   voice: null, // null: the system voice and rate (Accessibility > Spoken Content)
   say_path: '/usr/bin/say',
   speak_command: null, // another voice: a shell script given the text as its argument, done when it has spoken (speak-openai.sh)
-  pause_between_lines_seconds: 1.2, // Voice Control only matches a command spoken alone
+  pause_between_lines_seconds: 1.2, // a pause between lines, where a spoken command gets through
   silence_around_title_ms: 800,
   announce_session: 'on_change', // or 'always': before every reply, question and resumed reading
   pause_media: true, // pause the Now Playing app (music, YouTube…) while speaking, resume afterwards
   max_dictation_seconds: 180, // a dictation abandoned without "Stop" frees the reader after this
   first_paragraph_only: true, // the rest waits for "Continue"
   summarize_rest: true, // answering "the rest" to a question: a summary first, "the details" for the full text
-  validation_word: 'stop', // the Voice Control word that sends a dictation; Spokenly may transcribe it
+  validation_word: 'stop', // the spoken word that sends a dictation; Spokenly may transcribe it
   question_tool: 'mcp__spokenly__ask_user_dictation',
   target_app: 'Claude', // the app "Listen" brings forward
   dictate_behind: true, // said in another app, Claude stays behind: Spokenly records, the text is sent through accessibility
@@ -109,7 +110,7 @@ const RETURN_WAIT_SECONDS = 30 // for the dictated message to be sent before goi
 const RETURN_APP_KEPT_SECONDS = 300 // a session search abandoned long ago does not decide where "Stop" goes
 const MAX_READING_WAIT_SECONDS = 60 // the question hook has 120 s in all, its own reading included
 const LOCK_STALE_SECONDS = 10
-const SPEECH_LOCK_STALE_SECONDS = 40 // longer than any line takes to say
+const SPEECH_LOCK_STALE_SECONDS = 20 // the speaker touches it every 5 s: older, its holder is gone
 const OTHER_QUESTION_WAIT_SECONDS = 60 // the question hook has 120 s in all
 
 // ---------- system helpers
@@ -203,8 +204,9 @@ function say(text) {
 function sayNow(text) {
   pauseMediaIfPlaying()
   // A program that cannot be started or fails (no network, a wrong key) must never silence the voice: say takes over.
-  if (!CONFIG.speak_command || !speakWith('/bin/sh', [CONFIG.speak_command.replace(/^~(?=\/)/, HOME), text.replace(/\[\[slnc \d+\]\]/g, ' ').replace(/\s+/g, ' ').trim()])) {
-    speakWith(CONFIG.say_path, CONFIG.voice ? ['-v', CONFIG.voice, text] : [text])
+  const seconds = longestSpeaking(text)
+  if (!CONFIG.speak_command || !speakWith('/bin/sh', [CONFIG.speak_command.replace(/^~(?=\/)/, HOME), text.replace(/\[\[slnc \d+\]\]/g, ' ').replace(/\s+/g, ' ').trim()], seconds)) {
+    speakWith(CONFIG.say_path, CONFIG.voice ? ['-v', CONFIG.voice, text] : [text], seconds)
   }
   withState((state) => {
     state.last_speech_end = now()
@@ -214,7 +216,13 @@ function sayNow(text) {
 const TASK_KILLED = 2 // NSTaskTerminationReasonUncaughtSignal
 
 // The speaking process is recorded so that "Quiet" can stop it, whatever program it is.
-function speakWith(path, args) {
+// How long a line may take: a slow voice reads 100 words a minute, and a long paragraph is one line. A voice still
+// going after that has hung (an audio device changing under it).
+function longestSpeaking(text) {
+  return 30 + 0.6 * String(text).split(/\s+/).filter(Boolean).length
+}
+
+function speakWith(path, args, maxSeconds) {
   let task
   try {
     task = $.NSTask.launchedTaskWithLaunchPathArguments(path, args)
@@ -224,6 +232,14 @@ function speakWith(path, args) {
   withState((state) => {
     state.speaker_pid = task.processIdentifier
   })
+  // A voice that hangs must not hold everything up: cut it once it has gone on far longer than the line needs.
+  // Meanwhile the speech lock is kept fresh, so that a long line is never taken for a dead one.
+  const deadline = now() + maxSeconds
+  for (let tick = 0; task.isRunning && now() < deadline; tick++) {
+    if (tick % 50 === 49) touch(SPEECH_LOCK_PATH)
+    delay(0.1)
+  }
+  if (task.isRunning) task.terminate
   task.waitUntilExit
   withState((state) => {
     state.speaker_pid = null
@@ -329,6 +345,10 @@ function acquireLock(path = LOCK_PATH, staleSeconds = LOCK_STALE_SECONDS) {
     if (!attributes.isNil() && now() - attributes.fileModificationDate.timeIntervalSince1970 > staleSeconds) releaseLock(path)
     delay(0.02)
   }
+}
+
+function touch(path) {
+  $.NSFileManager.defaultManager.setAttributesOfItemAtPathError($({ NSFileModificationDate: $.NSDate.date }), path, null)
 }
 
 function releaseLock(path = LOCK_PATH) {
@@ -861,13 +881,16 @@ function questionToolIsDeclared() {
   return declared.some((servers) => server in servers)
 }
 
-// Shortcuts and the bridge service need a path that survives plugin updates; the plugin's folder changes with every version.
+// The listener and the bridge service need a path that survives plugin updates; the plugin's folder changes with every version.
 function refreshStableCopy() {
   const sourceDir = scriptPath().replace(/\/[^/]*$/, '')
   const stableDir = STABLE_COPY.replace(/\/[^/]*$/, '')
-  for (const name of ['handfree.js', 'bridge-server.py', 'speak-openai.sh']) {
+  for (const name of ['handfree.js', 'bridge-server.py', 'speak-openai.sh', 'listener.py', 'install-listener.sh']) {
     const source = readFile(`${sourceDir}/${name}`)
-    if (source && source !== readFile(`${stableDir}/${name}`)) writeFile(`${stableDir}/${name}`, source)
+    if (!source || source === readFile(`${stableDir}/${name}`)) continue
+    writeFile(`${stableDir}/${name}`, source)
+    // A listener installed (install-listener.sh) restarts on its new version.
+    if (name === 'listener.py' && readFile(`${HOME}/Library/LaunchAgents/${LISTENER_LABEL}.plist`)) shell(`launchctl kickstart -k gui/$(id -u)/${LISTENER_LABEL} >/dev/null 2>&1`)
   }
 }
 
@@ -878,7 +901,10 @@ function scriptPath() {
 // ---------- voice commands
 
 // A question records the session that asked; "Listen" records none.
+// Music or a video is paused for the dictation too, and resumed once it is over (by the reader, when nothing is left):
+// so is it whichever way Spokenly treats media, which pauses it without always resuming.
 function startDictating(session) {
+  pauseMediaIfPlaying()
   withState((state) => {
     killReader(state)
     state.dictating_since = now()
@@ -1076,6 +1102,16 @@ function switchVoiceMode(on) {
     }
   })
   say(on ? PHRASE.voice_on : PHRASE.voice_off)
+  switchListener(on)
+}
+
+// Voice mode off stops listening altogether (the microphone is let go); on starts it again. Only once it is installed.
+function switchListener(on) {
+  const plist = `${HOME}/Library/LaunchAgents/${LISTENER_LABEL}.plist`
+  // A state folder of its own (the tests) never touches the real service.
+  if (ENV.HANDFREE_STATE_DIR || !readFile(plist)) return
+  const domain = `gui/$(id -u)`
+  shell(on ? `launchctl bootstrap ${domain} ${quote(plist)} >/dev/null 2>&1; true` : `launchctl bootout ${domain}/${LISTENER_LABEL} >/dev/null 2>&1; true`)
 }
 
 function isVoiceModeOn() {
@@ -1231,7 +1267,7 @@ function reachablePrompt() {
   }
 }
 
-// The Shortcut returns at once: the dictation runs in its own process, so "Stop" can be said while it waits.
+// The command returns at once: the dictation runs in its own process, so "Stop" can be said while it waits.
 function startDictatingBehind(session) {
   startDictating()
   if (ENV.HANDFREE_OPEN_LOG) return writeFile(ENV.HANDFREE_OPEN_LOG, (readFile(ENV.HANDFREE_OPEN_LOG) || '') + `dictate behind ${session || '-'}\n`)

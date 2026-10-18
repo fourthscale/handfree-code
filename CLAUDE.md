@@ -1,6 +1,6 @@
 # handfree-code
 
-A Claude Code plugin to drive Claude Code by voice on macOS: replies read aloud, questions answered through Spokenly, commands through Voice Control.
+A Claude Code plugin to drive Claude Code by voice on macOS: replies read aloud, questions answered through Spokenly, spoken commands through an offline listener (Vosk).
 
 Read before changing anything:
 - [docs/architecture.md](docs/architecture.md): how it works (hooks, shared state, the reading queue, questions, voice commands, cloud bridge).
