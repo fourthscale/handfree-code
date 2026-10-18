@@ -14,3 +14,18 @@ claude mcp remove --scope user spokenly >/dev/null 2>&1 || true
 claude mcp add --scope user --transport http spokenly '${HANDFREE_BRIDGE_URL}/mcp' \
   --header 'Authorization: Bearer ${HANDFREE_BRIDGE_TOKEN}' \
   --header 'X-Handfree-Key: ${HANDFREE_BRIDGE_EDGE_KEY:-}' || true
+
+# Spokenly waits as long as you take to answer; Claude Code stops the call at this timeout (2 minutes).
+python3 - <<'PY' || true
+import json, os
+path = os.path.expanduser("~/.claude.json")
+try:
+    config = json.load(open(path, encoding="utf-8"))
+except (OSError, ValueError):
+    config = {}
+server = config.get("mcpServers", {}).get("spokenly")
+if server is not None:
+    server["timeout"] = 120000
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+PY

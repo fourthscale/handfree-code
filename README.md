@@ -62,7 +62,7 @@ Then open a new session: it copies the plugin's scripts to `~/Library/Applicatio
     }
   }
   ```
-  Add the `spokenly` entry to the `mcpServers` already in the file. `timeout` (2 minutes) keeps an unanswered question from blocking the session for 30 minutes. Or with the command line, then add the `timeout` by hand:
+  Add the `spokenly` entry to the `mcpServers` already in the file. `timeout` (2 minutes) leaves you time to think and answer, and keeps an unanswered question from blocking the session for 30 minutes (the scripts below set it for you). Or with the command line, then add the `timeout` by hand:
   ```bash
   claude mcp add --scope user spokenly "$HOME/Library/Application Support/Spokenly/mcp-bridge.sh"
   ```

@@ -120,6 +120,14 @@ check "a one-paragraph question is read as it is" "$(said | tr '\n' ' ')" "A que
 check_not "with no rest announced" "$(said)" "Details available"
 printf '{"session_id":"k"}' | hf --answered >/dev/null
 
+# A dictation under way ("Listen") is not freed by another session's question failing or being answered.
+reset; hf --dictating >/dev/null
+printf '{"session_id":"x","tool_response":[{"type":"text","text":"Already recording"}]}' | hf --answered >/dev/null
+reply b 'Working session done.'; sleep 1.5
+check_not "another session's answer does not free a dictation under way" "$(said)" "Working session done"
+hf --done >/dev/null; wait_quiet 1.5
+check "Stop does, and the reply is read" "$(said)" "Working session done"
+
 # Two sessions asking at once: the second question waits for the first one's answer, never read over it.
 transcript x 'Xray'; transcript y 'Yankee'
 reset; printf '{"session_id":"x","transcript_path":"%s/x.jsonl","tool_input":{"questions":["Question from X?"]}}' "$WORK" | hf --question >/dev/null

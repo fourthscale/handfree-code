@@ -29,6 +29,21 @@ case "$TRANSPORT" in
     ;;
 esac
 
+# Spokenly waits as long as you take to answer; Claude Code stops the call at this timeout (2 minutes).
+[ "$TRANSPORT" = none ] || /usr/bin/python3 - <<'PY' || true
+import json, os
+path = os.path.expanduser("~/.claude.json")
+try:
+    config = json.load(open(path, encoding="utf-8"))
+except (OSError, ValueError):
+    config = {}
+server = config.get("mcpServers", {}).get("spokenly")
+if server is not None:
+    server["timeout"] = 120000
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+PY
+
 /usr/bin/python3 - "$CONFIG" "$TRANSPORT" <<'EOF'
 import json, os, sys
 path, transport = sys.argv[1], sys.argv[2]

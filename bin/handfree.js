@@ -987,9 +987,13 @@ function answered() {
     const rest = item ? item.lines.slice(item.position) : []
     const detail = state.detail && state.detail.session === data.session_id ? state.detail.lines : []
     const consumeRest = () => Object.assign(item, { position: item.lines.length, pause_at: item.lines.length })
-    // Asking for more: the question is asked again right after, so the other sessions keep waiting.
+    // Asking for more: the question is asked again right after, so the other sessions keep waiting. Only this session's
+    // own question is released: a refused or failed call ("Spokenly already recording") must not free a dictation under
+    // way elsewhere, such as "Listen" said while this session worked.
     const held = wantsMore || wantsDetail
-    Object.assign(state, { dictating_since: held ? now() : null, dictating_session: held ? data.session_id : null, detail: null })
+    const own = !isDictating(state) || state.dictating_session === data.session_id
+    if (own) Object.assign(state, { dictating_since: held ? now() : null, dictating_session: held ? data.session_id : null })
+    state.detail = null
     if (wantsMore && rest.length >= SUMMARY_MIN_LINES && CONFIG.summarize_rest) {
       consumeRest()
       state.detail = { session: data.session_id, lines: rest }
@@ -999,7 +1003,7 @@ function answered() {
     const [first, second] = wantsDetail ? [detail, rest] : [rest, detail]
     const found = wantsMore || wantsDetail ? (first.length ? first : second) : []
     if (found.length && found === rest) consumeRest()
-    if (!found.length) {
+    if (!found.length && own) {
       Object.assign(state, { dictating_since: null, dictating_session: null })
       startReaderUnlessRunning(state)
     }
