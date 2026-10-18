@@ -9,13 +9,12 @@ How to change the plugin, test it and try it for real. [architecture.md](archite
 | `bin/handfree.js` | the plugin: hooks, reader, voice commands (JavaScript for Automation, run by `osascript`) |
 | `bin/hook.sh` | entry point of every hook: `handfree.js` on a Mac, `cloud-hook.py` elsewhere |
 | `bin/bridge-server.py`, `bin/cloud-hook.py`, `bin/cloud-setup.sh`, `bin/install-bridge.sh` | the bridge for cloud sessions |
-| `bin/install-voice-commands.py` | creates the Voice Control commands |
+| `bin/listener.py` | the spoken-commands listener (Vosk, offline) |
+| `bin/install-listener.sh` | installs or updates it: Python environment, model, login service |
 | `bin/set-question-transport.sh` | switches how local sessions reach Spokenly |
 | `bin/speak-openai.sh` | example `speak_command` (another voice) |
 | `hooks/hooks.json` | which hook runs what |
-| `commands/vocal.md` | the `/vocal` command |
-| `shortcuts/*.sh`, `shortcuts/stop.applescript` | what each Shortcut runs; `shortcuts/import/` holds the signed, importable files |
-| `tools/build-shortcuts.py` | rebuilds and signs `shortcuts/import/` |
+| `commands/vocal.md`, `commands/listener.md` | the `/handfree-code:vocal` and `/handfree-code:listener` commands |
 | `tests/run.sh`, `tests/bridge.sh` | the tests |
 | `.claude-plugin/` | plugin manifest and local marketplace |
 
@@ -49,6 +48,7 @@ Environment variables let the tests stand in for the Mac:
 | `HANDFREE_OPEN_LOG` | links opened and apps brought back are written there instead; no click or key either |
 | `HANDFREE_APP_SESSIONS_DIR` | the Claude app's session files |
 | `HANDFREE_FRONT_APP` | the app in front (empty: none) |
+| `HANDFREE_PROMPT_REACHABLE` | whether Claude's message field can be reached from another app (`1`/`0`) |
 | `HANDFREE_PROJECTS_DIR`, `HANDFREE_RETURN_WAIT_SECONDS` | Claude Code's transcripts, and how long to wait for a sent message |
 | `HANDFREE_SPOKENLY_URL`, `HANDFREE_SPOKENLY_UP` | Spokenly's address, and whether it answers |
 | `HANDFREE_CONTEXT` | `local` or `cloud` |
@@ -65,11 +65,12 @@ Each behaviour gets a check in `tests/run.sh`, with a name that says what should
    ```
 3. Open a **new session**: hooks are loaded when a session starts, and it also refreshes the stable copy the voice commands run. Sessions already open keep the old version.
 
-After changing a script in `shortcuts/`, rebuild the importable files with `python3 tools/build-shortcuts.py`. It signs them through Apple; run it again if a signing is turned down.
+After changing `bin/listener.py`, a new session copies it and restarts the listener; to try it at once: `cp bin/listener.py ~/Library/Application\ Support/handfree-code/ && launchctl kickstart -k "gui/$(id -u)/com.handfree-code.listener"`. `python3 bin/listener.py --check "<phrase>"` prints what it would do with a phrase, given the current state.
 
 ## Debugging
 
 - **What was said**: nothing is logged on the Mac; the state file (`~/Library/Caches/claude-speak/state.json`) shows the queue, the reader and any dictation under way.
+- **The listener**: set `"listener_log": true`, restart it, read `~/Library/Logs/handfree-listener.log` (each phrase heard and why it was ignored).
 - **Dictating with Claude behind**: set `"dictation_log": true`, then read `~/Library/Caches/claude-speak/dictate-behind.log` (each step, and why the usual way was taken).
 - **Cloud sessions**: `/tmp/handfree-hook.log` in the cloud session (one line per hook) and `~/Library/Logs/handfree-bridge.log` on the Mac.
 - **A voice command that does nothing**: usually an Accessibility permission; see the README's *Troubleshooting*.

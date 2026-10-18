@@ -1,7 +1,7 @@
 {
   "name": "handfree-code",
-  "version": "0.1.43",
-  "description": "Drive Claude Code by voice on macOS: replies and questions read aloud, dictation through Spokenly, voice commands through Voice Control.",
+  "version": "0.2.0",
+  "description": "Drive Claude Code by voice on macOS: replies and questions read aloud, dictation through Spokenly, spoken commands recognized offline.",
   "author": {
     "name": "Ludovic Raymond"
   },

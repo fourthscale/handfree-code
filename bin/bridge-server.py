@@ -18,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 CONFIG_PATH = os.environ.get("HANDFREE_CONFIG") or os.path.expanduser("~/.config/claude-speak.json")
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "handfree.js")
+LOG_PATH = os.path.expanduser("~/Library/Logs/handfree-bridge.log")  # where its service sends stderr (install-bridge.sh)
 SPOKENLY_URL = os.environ.get("HANDFREE_SPOKENLY_URL", "http://localhost:51089")
 HOOK_COMMANDS = {"", "--question", "--guard-question", "--answered", "--notify", "--session-rules"}
 HOOK_TIMEOUT_SECONDS = 110
@@ -58,9 +59,23 @@ def ask_spokenly(body):
         return response.read()
 
 
+def trim_log(path, max_bytes=200_000, kept_lines=500):
+    """Past max_bytes, a log keeps only its last lines: it never fills the disk."""
+    try:
+        if os.path.getsize(path) > max_bytes:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                kept = f.readlines()[-kept_lines:]
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines(kept)
+    except OSError:
+        pass
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         sys.stderr.write("handfree bridge: " + format % args + "\n")
+        sys.stderr.flush()
+        trim_log(LOG_PATH)
 
     def do_GET(self):
         self.reply(405, b"")

@@ -8,7 +8,7 @@
     {
       "name": "handfree-code",
       "source": "./",
-      "description": "Drive Claude Code by voice on macOS: replies and questions read aloud, dictation through Spokenly, voice commands through Voice Control."
+      "description": "Drive Claude Code by voice on macOS: replies and questions read aloud, dictation through Spokenly, spoken commands recognized offline."
     }
   ]
 }
