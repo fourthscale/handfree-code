@@ -132,19 +132,30 @@ It adds one command per shortcut in Voice Control's language (French, English or
 
 Or by hand: Commands… > "+", for each command: "While using: Any Application", "Perform: Run Shortcut".
 
-| You say | Shortcut | What it does |
-|---|---|---|
-| Claude Listen | Claude Listen | brings Claude forward, clicks its field, starts Spokenly |
-| Claude Reply | Claude Reply | the same, in the session that spoke last |
-| Claude Session | Claude Session | opens the session search and starts Spokenly: say a session's name, then "Stop" |
-| Stop | Stop | sends the dictation (presses Return) |
-| Claude Quiet | Claude Quiet | cuts the reading |
-| Claude Continue | Claude Continue | reads the rest of the reply |
-| Claude Restart | Claude Restart | reads the reply again from the start |
-| Claude Voice mode on | Claude Voice mode on | turns voice mode on |
-| Claude Voice mode off | Claude Voice mode off | turns it off: nothing is read, questions stay written |
+| Shortcut | Said in English | En français | Auf Deutsch | What it does |
+|---|---|---|---|---|
+| Claude Listen | claude listen | claude écoute | claude zuhören | brings Claude forward, clicks its field, starts Spokenly |
+| Claude Reply | claude reply | claude réponds | claude antworten | the same, in the session that spoke last |
+| Claude Session | claude session | claude session | claude sitzung | opens the session search and starts Spokenly: say a session's name, then "Stop" |
+| Stop | stop | stop | stopp | sends the dictation (presses Return) |
+| Claude Quiet | claude quiet | claude chut | claude ruhe | cuts the reading |
+| Claude Continue | claude continue | claude continue | claude weiter | reads the rest of the reply |
+| Claude Restart | claude restart | claude recommence | claude neu | reads the reply again from the start |
+| Claude Voice mode on | claude voice mode on | claude mode vocal activé | claude sprachmodus an | turns voice mode on |
+| Claude Voice mode off | claude voice mode off | claude mode vocal désactivé | claude sprachmodus aus | turns it off: nothing is read, questions stay written |
 
-"Claude" in front keeps a word said in conversation from triggering a command. "Stop" stays short: you say it at the end of every dictation. Pick your own words, in any language; keep "Stop" the same as the `validation_word` setting.
+**The phrases are yours to choose**, in any language. Set them in `~/.config/claude-speak.json` before running the script, for the shortcuts you want to rename:
+
+```json
+{
+  "voice_commands": {
+    "Claude Listen": "claude parle",
+    "Claude Voice mode on": "claude réveille-toi"
+  }
+}
+```
+
+Or rename a command later in Voice Control's Commands. "Claude" in front keeps a word said in conversation from triggering a command; short, distinct phrases are recognised best. "Stop" stays short since you say it after every dictation: keep it the same as the `validation_word` setting.
 
 Switch Voice Control to **command mode** (search "mode" in the command list): otherwise it types everything it hears into Claude's field, the reading voice included.
 
@@ -352,6 +363,7 @@ All optional, in `~/.config/claude-speak.json`:
 | `language` | the Mac's | spoken phrases and rules: `fr`, `en` or `de` (otherwise English) |
 | `voice` | system voice | a `say` voice to force |
 | `speak_command` | — | script that speaks instead of `say`; `say` takes over if it fails |
+| `voice_commands` | per language | your phrases for the Voice Control commands, read by `install-voice-commands.py` |
 | `validation_word` | `stop` | word that sends a dictation; sessions ignore it at the end of a message |
 | `first_paragraph_only` | `true` | `false` reads the whole reply right away |
 | `pause_between_lines_seconds` | `1.2` | silence between lines, where a voice command gets through |

@@ -7,6 +7,7 @@ and turn Voice Control back on. A command whose phrase already exists is pointed
 Your commands are saved to ~/Library/Application Support/handfree-code/ first.
 """
 import datetime
+import json
 import os
 import plistlib
 import re
@@ -16,6 +17,7 @@ import tempfile
 import time
 
 DOMAIN = "com.apple.speech.recognition.AppleSpeechRecognition.CustomCommands"
+CONFIG_PATH = os.environ.get("HANDFREE_CONFIG") or os.path.expanduser("~/.config/claude-speak.json")
 BACKUP_DIR = os.path.expanduser("~/Library/Application Support/handfree-code")
 # Shortcut -> phrase, per language. Lowercase, as Voice Control stores them.
 PHRASES = {
@@ -68,11 +70,21 @@ def voice_control_locale(commands):
     return max(set(locales), key=locales.count) if locales else "en_US"
 
 
+def own_phrases():
+    """The user's phrases, from voice_commands in the settings: {"Claude Listen": "claude écoute", ...}."""
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            chosen = json.load(f).get("voice_commands") or {}
+    except (OSError, ValueError):
+        return {}
+    return {name: phrase.strip().lower() for name, phrase in chosen.items() if isinstance(phrase, str) and phrase.strip()}
+
+
 def main():
     dry_run = "--dry-run" in sys.argv
     commands = read_commands()
     locale = voice_control_locale(commands)
-    phrases = PHRASES.get(locale[:2], PHRASES["en"])
+    phrases = dict(PHRASES.get(locale[:2], PHRASES["en"]), **{n: p for n, p in own_phrases().items() if n in PHRASES["en"]})
     ids = shortcut_ids()
     missing = [name for name in phrases if name not in ids]
     if missing:
