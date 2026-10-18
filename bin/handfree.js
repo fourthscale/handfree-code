@@ -6,6 +6,7 @@
 //   --question        PreToolUse on the Spokenly tool: pauses the queue, reads the question, then waits for the dictation
 //   --notify          Notification: queues "Claude needs your answer"
 //   --session-rules   SessionStart: prints the voice rules, refreshes the stable copy the Shortcuts call
+//   --guard-question  PreToolUse on AskUserQuestion and the app's session offer: sends Claude to Spokenly instead
 //   --permission      PermissionRequest: reads the request, answers it from a spoken yes or no (voice_permissions)
 //   --answered        PostToolUse on the Spokenly tool: the answer is in, however it was sent; the queue goes on.
 //                     Answered "the rest": the rest of the text before the question is read, and Claude asks again
@@ -16,7 +17,8 @@
 //   --done            "Stop": the dictation is sent, the queue goes on
 //   --stop / --resume / --restart   "Claude Quiet" / "Claude Continue" / "Claude Restart"
 //   --on / --off      "Claude Voice mode on" / "Claude Voice mode off" (--toggle: /vocal with no argument)
-// Internal: --read (the reader process), --learn-prompt-path (background search of the message field)
+// Internal: --read (the reader process), --learn-prompt-path (background search of the message field),
+//   --go-back <bundle> <since> (brings the app "Listen" was said in back, once the dictated message is sent)
 
 ObjC.import('Foundation')
 ObjC.import('AppKit')
@@ -48,6 +50,7 @@ const DEFAULTS = {
   validation_word: 'stop', // the Voice Control word that sends a dictation; Spokenly may transcribe it
   question_tool: 'mcp__spokenly__ask_user_dictation',
   target_app: 'Claude', // the app "Listen" brings forward
+  return_to_previous_app: true, // after "Stop", back to the app "Listen" was said in (none if it was already target_app)
   click_prompt: null, // null: only for the Claude desktop app; a terminal has no field to click
   prompt_name: 'Prompt', // accessibility description of the desktop app's message field
   prompt_fallback: { x_ratio: 0.6, from_bottom: 55 }, // clicked while the field's path is relearnt
@@ -91,6 +94,8 @@ const SESSION_RULES = {
 
 const DELEGATED_TURN_ORIGINS = ['sdk', 'peer'] // an unknown value, after a Claude Code update, reads the reply
 const LEARNING_TIMEOUT_SECONDS = 120
+const RETURN_WAIT_SECONDS = 30 // for the dictated message to be sent before going back
+const RETURN_APP_KEPT_SECONDS = 300 // a session search abandoned long ago does not decide where "Stop" goes
 const MAX_READING_WAIT_SECONDS = 60 // the question hook has 120 s in all, its own reading included
 const LOCK_STALE_SECONDS = 10
 
@@ -274,7 +279,7 @@ function sendMediaCommand(name) {
 // ---------- state, shared by every process, behind a lock
 
 function emptyState() {
-  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, dictating_session: null, reading_requested: false, finishing_current: false, read_before_question: null, reply_before_question: null, detail: null, voice_off: false, prompt_path: null, learning_since: null, media_paused: false, last_speech_end: 0, speaker_pid: null }
+  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, dictating_session: null, reading_requested: false, finishing_current: false, return_app: null, read_before_question: null, reply_before_question: null, detail: null, voice_off: false, prompt_path: null, learning_since: null, media_paused: false, last_speech_end: 0, speaker_pid: null }
 }
 
 function withState(change) {
@@ -556,6 +561,27 @@ function queueWaitingNotice() {
   enqueue(data, readTranscript(data.transcript_path), [PHRASE.waiting], 1)
 }
 
+// The app's own ways of asking wait for a click or a pick on screen: in voice mode they are turned back to Spokenly.
+// A refusal does not stop Claude: it reads the reason as the tool's result and asks again, the spoken way.
+const SCREEN_ONLY_QUESTION = {
+  fr: "Mode vocal actif : cette question s'affiche seulement à l'écran, l'utilisateur ne l'entend pas et ne peut pas y répondre à la voix. Pose-la avec l'outil `{tool}` à la place (la question seule ; le texte qu'elle concerne va dans ta réponse écrite).",
+  en: 'Voice mode is on: this question only shows on screen; the user does not hear it and cannot answer it by voice. Ask it with the `{tool}` tool instead (the question alone; the text it is about goes in your written reply).',
+}
+const SCREEN_ONLY_SESSION_OFFER = {
+  fr: "Mode vocal actif : cette proposition attend un clic à l'écran, l'utilisateur ne l'entend pas. Demande-lui avec l'outil `{tool}` s'il veut cette tâche dans une nouvelle session ou ici. S'il choisit une nouvelle session, lance-la (initiation \"user_asked\") ; sinon fais-la ici.",
+  en: 'Voice mode is on: this offer waits for a click on screen; the user does not hear it. Ask them with the `{tool}` tool whether they want this task in a new session or here. If they pick a new session, start it (initiation "user_asked"); otherwise do it here.',
+}
+
+function guardScreenOnlyQuestion() {
+  const data = readStdin()
+  if (!questionsCanBeSpoken() || userIsAway()) return ''
+  const offer = /start_session$/.test(data.tool_name || '')
+  if (offer && (data.tool_input || {}).initiation !== 'offer') return '' // a proposal card waits for nobody
+  const reasons = offer ? SCREEN_ONLY_SESSION_OFFER : SCREEN_ONLY_QUESTION
+  const reason = (reasons[LANGUAGE] || reasons.en).replace('{tool}', CONFIG.question_tool)
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } })
+}
+
 const AWAY = {
   fr: "L'utilisateur n'est pas devant son Mac (aucune activité depuis {minutes} min) : Spokenly ne l'atteindrait pas. Pose ta question par écrit dans ta réponse.",
   en: 'The user is not at their Mac (no activity for {minutes} min): Spokenly would not reach them. Ask your question in writing in your reply.',
@@ -787,11 +813,77 @@ function startDictating(session) {
 }
 
 function doneDictating() {
-  withState((state) => {
+  const back = withState((state) => {
     state.dictating_since = null
     state.dictating_session = null
     startReaderUnlessRunning(state)
+    // A dictation abandoned without "Stop" leaves a note: too old, it no longer decides.
+    const previous = state.return_app
+    const due = previous && previous.armed && now() - previous.since < CONFIG.max_dictation_seconds
+    if (previous && previous.armed) state.return_app = null
+    return due ? previous.bundle : null
   })
+  if (!back) return
+  // Spokenly inserts the text and sends it only while Claude is still in front: going back waits for the message to leave.
+  if (ENV.HANDFREE_OPEN_LOG) return goBackOnceSent([back, String(now())]) // tests: no process in the background
+  shell(`osascript -l JavaScript ${quote(scriptPath())} --go-back ${quote(back)} ${now()} >/dev/null 2>&1 &`)
+}
+
+// Claude Code records a message the moment it is sent, whether the session is at rest or working (a queue entry).
+// None within the wait (a cloud session, a dictation that never came): Claude stays on screen.
+function goBackOnceSent([bundle, since]) {
+  const deadline = Number(since) + (Number(ENV.HANDFREE_RETURN_WAIT_SECONDS) || RETURN_WAIT_SECONDS)
+  for (;;) {
+    if (messageSentSince(Number(since))) return bringBack(bundle)
+    if (now() > deadline) return
+    delay(0.5)
+  }
+}
+
+function messageSentSince(since) {
+  const dir = ENV.HANDFREE_PROJECTS_DIR || `${ENV.CLAUDE_CONFIG_DIR || `${HOME}/.claude`}/projects`
+  // do shell script hands lines back separated by \r.
+  const files = shell(`find ${quote(dir)} -name '*.jsonl' -mtime -${RETURN_WAIT_SECONDS + 30}s 2>/dev/null`).split(/\r\n?|\n/).filter(Boolean)
+  return files.some((file) =>
+    shell(`tail -c 50000 ${quote(file)}`)
+      .split(/\r\n?|\n/)
+      .some((line) => {
+        if (!line.includes('"queue-operation"') || !line.includes('"enqueue"')) return false
+        try {
+          const entry = JSON.parse(line)
+          return Date.parse(entry.timestamp) / 1000 >= since && !String(entry.content || '').startsWith('<')
+        } catch (e) {
+          return false
+        }
+      }),
+  )
+}
+
+// The app Claude was brought over: noted when "Listen", "Reply" or "Session" is said, gone back to after "Stop".
+// Already in target_app, nothing is noted: "Stop" must leave Claude on screen. A note kept from "Session" is reused.
+function rememberFrontApp(armed) {
+  if (!CONFIG.return_to_previous_app) return
+  const front = frontApp()
+  withState((state) => {
+    const kept = state.return_app && !state.return_app.armed && now() - state.return_app.since < RETURN_APP_KEPT_SECONDS ? state.return_app : null
+    const noted = kept ? kept.bundle : front && front.name !== CONFIG.target_app ? front.bundle : null
+    state.return_app = noted ? { bundle: noted, armed, since: now() } : null
+  })
+}
+
+function frontApp() {
+  if (ENV.HANDFREE_FRONT_APP !== undefined) return ENV.HANDFREE_FRONT_APP ? { name: ENV.HANDFREE_FRONT_APP, bundle: `id.${ENV.HANDFREE_FRONT_APP}` } : null
+  try {
+    const process = Application('System Events').processes.whose({ frontmost: true })[0]
+    return { name: process.name(), bundle: process.bundleIdentifier() }
+  } catch (e) {
+    return null
+  }
+}
+
+function bringBack(bundle) {
+  if (ENV.HANDFREE_OPEN_LOG) return writeFile(ENV.HANDFREE_OPEN_LOG, (readFile(ENV.HANDFREE_OPEN_LOG) || '') + `back to ${bundle}\n`)
+  shell(`open -b ${quote(bundle)}`)
 }
 
 // Answers that only ask for the rest of the text read before the question: summed up first, then in full.
@@ -958,6 +1050,11 @@ function clickPrompt() {
 }
 
 function listen() {
+  rememberFrontApp(true)
+  dictateInTargetApp()
+}
+
+function dictateInTargetApp() {
   startDictating()
   if (ENV.HANDFREE_OPEN_LOG) return // tests: no window, click or key
   Application(CONFIG.target_app).activate()
@@ -991,15 +1088,18 @@ function openAppLink(url) {
 
 // A cloud session, or one the app does not show, has no link: the session on screen is the one dictated to.
 function reply() {
+  rememberFrontApp(true)
   const session = appSessionId(withState((state) => state.last_speaker))
   if (session) {
     openAppLink(`claude://code/continue?session=${session}`)
     if (!ENV.HANDFREE_OPEN_LOG) delay(CONFIG.open_session_delay_seconds)
   }
-  listen()
+  dictateInTargetApp()
 }
 
+// The session is chosen first: the "Stop" that picks it does not go back yet, the "Listen" that follows does.
 function searchSession() {
+  rememberFrontApp(false)
   startDictating()
   openAppLink('claude://code/search')
   if (ENV.HANDFREE_OPEN_LOG) return
@@ -1070,13 +1170,16 @@ const COMMANDS = {
   '--toggle': () => switchVoiceMode(!isVoiceModeOn()),
   '--read': readQueue,
   '--learn-prompt-path': learnPromptPath,
+  '--go-back': goBackOnceSent,
+  '--guard-question': guardScreenOnlyQuestion,
 }
-const SILENT_WHEN_OFF = ['', '--question', '--notify', '--session-rules', '--listen', '--reply', '--search-session', '--permission']
+const SILENT_WHEN_OFF = ['', '--question', '--guard-question', '--notify', '--session-rules', '--listen', '--reply', '--search-session', '--permission']
 
 function run(argv) {
   const command = argv[0] || ''
   if (!(command in COMMANDS)) return `unknown command: ${command}`
   if (SILENT_WHEN_OFF.includes(command) && !isVoiceModeOn()) return ''
-  const output = COMMANDS[command]()
+  // Only "--go-back" takes arguments: the others must not see them as their own parameters.
+  const output = command === '--go-back' ? goBackOnceSent(argv.slice(1)) : COMMANDS[command]()
   return typeof output === 'string' ? output : ''
 }

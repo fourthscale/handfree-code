@@ -175,10 +175,11 @@ Check: say "Claude Listen", dictate a message, say "Stop". It goes to the sessio
 
 ## Usage
 
-- **Claude Listen** → dictate → **Stop**: the message goes to the session on screen, wherever you were.
+- **Claude Listen** → dictate → **Stop**: the message goes to the session on screen, wherever you were. Claude comes forward for the dictation; once the message has left (Spokenly inserts and sends it only while Claude is in front), you are back in the app you said it in (your browser, say). No message within 30 s, a cloud session for instance: Claude stays on screen. Said in Claude, you stay in Claude. **Claude Reply** does the same, and so does **Claude Session** followed by **Claude Listen**. `"return_to_previous_app": false` leaves Claude on screen.
 - **Claude Reply** → dictate → **Stop**: the message goes to the session that spoke last, even if another one is on screen. A cloud session cannot be opened this way: the session on screen gets it.
 - **Claude Session** → say a session's name → **Stop**: that session opens. Then **Claude Listen**.
 - **A question**: Claude writes its reply in full, the question last, and ends its turn; it is then asked to put the question alone to Spokenly. The reply stays on screen and its first paragraph is read first, then "There is more" if text remains, then the question ("A question. …"). A long reply is summed up in two or three sentences Claude puts with the question: its first paragraph and that summary are read at once, then the question; "the rest" or "the details" read it in full. The voice rules ask for that order because text written just before a tool call may be hidden in the app. You answer, **Stop** or Enter sends; the answer goes back to the session that asked. To hear the rest of that text first, answer "the rest" ("la suite", "der Rest"): a long rest comes as a summary Claude writes, read before the question asked again; answer "the details" ("le détail", "die Details") to hear the full text, then Claude asks once more. A short rest is read as it is. `"summarize_rest": false` reads the full rest straight away.
+- **The app's own questions** (its multiple-choice window, its "start in a new session?" card) are never read aloud: in voice mode Claude is turned back to ask them through Spokenly.
 - **A reply**: the first paragraph is read, then "There is more" if text remains. **Claude Continue** reads the rest, **Claude Restart** reads it all again, **Claude Quiet** cuts it (say it between two lines).
 - **Several sessions**: readings wait their turn. A session's name is said when the speaker changes. A question waits for the reading under way to reach its pause (its first paragraph, up to a minute), then nothing else is read until you answer: Spokenly never takes down another voice.
 - **Music or a video**: paused while Claude speaks, resumed afterwards. Only the app the keyboard's play/pause key drives; if nothing plays, nothing is touched.
@@ -374,6 +375,7 @@ All optional, in `~/.config/claude-speak.json`:
 | `max_dictation_seconds` | `180` | after a dictation never sent, reading resumes |
 | `question_tool` | `mcp__spokenly__ask_user_dictation` | questions tool named in the voice rules |
 | `target_app` | `Claude` | app "Claude Listen" brings forward; `iTerm2` or `Terminal` for a terminal |
+| `return_to_previous_app` | `true` | after **Stop**, back to the app "Claude Listen" was said in; `false` stays in Claude |
 | `click_prompt` | auto | click into the message field (only for the Claude app by default) |
 | `prompt_name` | `Prompt` | accessibility name of the Claude app's message field |
 | `prompt_fallback` | `{"x_ratio": 0.6, "from_bottom": 55}` | point clicked when the field is not found |
@@ -419,6 +421,8 @@ Checked with Claude Code 2.1.287 and macOS 14.4.1, October 2026.
   - Session titles and delegated turns are read from Claude Code's internal transcript format. If it changes, the plugin falls back to the folder name and reads the reply.
 
 ## Development
+
+How it works: [docs/architecture.md](docs/architecture.md). Layout, conventions and how to try a change: [docs/development.md](docs/development.md).
 
 ```bash
 tests/run.sh

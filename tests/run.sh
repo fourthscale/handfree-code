@@ -221,6 +221,19 @@ if spokenly_declared; then
   wait_quiet 1.5
 fi
 
+if spokenly_declared; then
+  out=$(printf '{"session_id":"b","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Which?"}]}}' | hf --guard-question)
+  check "the app's multiple-choice question is turned back to Spokenly" "$out" '"permissionDecision":"deny".*mcp__spokenly__ask_user_dictation'
+  out=$(printf '{"session_id":"b","tool_name":"mcp__ccd_session__start_session","tool_input":{"initiation":"offer","title":"x"}}' | hf --guard-question)
+  check "the app's session offer is asked through Spokenly" "$out" '"permissionDecision":"deny".*new session or here'
+  out=$(printf '{"session_id":"b","tool_name":"mcp__ccd_session__start_session","tool_input":{"initiation":"own_initiative","title":"x"}}' | hf --guard-question)
+  check_not "a proposal card waiting for nobody is let through" "$out" "deny"
+  out=$(printf '{"session_id":"b","tool_name":"AskUserQuestion","tool_input":{}}' | HANDFREE_IDLE_SECONDS=3600 sh -c "osascript -l JavaScript '$SCRIPT' --guard-question")
+  check_not "away from the Mac, the app's question is let through" "$out" "deny"
+  hf --off >/dev/null; out=$(printf '{"session_id":"b","tool_name":"AskUserQuestion","tool_input":{}}' | hf --guard-question); hf --on >/dev/null; reset
+  check_not "voice mode off, the app's question is let through" "$out" "deny"
+fi
+
 reset; out=$(HANDFREE_IDLE_SECONDS=3600 sh -c "printf '{\"session_id\":\"b\",\"transcript_path\":\"%s/b.jsonl\",\"tool_input\":{\"questions\":[\"Away?\"]}}' '$WORK' | osascript -l JavaScript '$SCRIPT' --question")
 check "away from the Mac, the Spokenly question is refused" "$out" '"permissionDecision":"deny"'
 check_not "and nothing is said" "$(said)" "Away"
@@ -325,7 +338,7 @@ check_not "Quiet stops the other voice too" "$(said)" "Cut short"
 configure
 
 # Pointing at a session: links are recorded instead of opened, and no window, click or key happens.
-export HANDFREE_OPEN_LOG="$WORK/links.log" HANDFREE_APP_SESSIONS_DIR="$WORK/app-sessions"
+export HANDFREE_OPEN_LOG="$WORK/links.log" HANDFREE_APP_SESSIONS_DIR="$WORK/app-sessions" HANDFREE_FRONT_APP=""
 SID=11111111-2222-3333-4444-555555555555
 mkdir -p "$HANDFREE_APP_SESSIONS_DIR/x/y"
 printf '{"sessionId":"local_abc-1","cliSessionId":"%s","title":"Speaker"}' "$SID" > "$HANDFREE_APP_SESSIONS_DIR/x/y/local_abc-1.json"
@@ -340,7 +353,37 @@ reset; hf --search-session >/dev/null; reply a 'Not while naming the session.'; 
 check "Claude Session opens the session search" "$(cat "$HANDFREE_OPEN_LOG")" "^claude://code/search$"
 check_not "and holds the reading while the name is dictated" "$(said)" "Not while naming"
 hf --done >/dev/null; wait_quiet 1.5
-unset HANDFREE_OPEN_LOG HANDFREE_APP_SESSIONS_DIR
+
+# "Stop" goes back to the app "Listen" was said in, once the message has left; already in Claude, it stays there.
+export HANDFREE_PROJECTS_DIR="$WORK/projects" HANDFREE_RETURN_WAIT_SECONDS=1
+mkdir -p "$HANDFREE_PROJECTS_DIR/p"
+sent() { printf '{"type":"queue-operation","operation":"enqueue","timestamp":"%s","content":"%s"}\n' "$(date -u -v+5S +%Y-%m-%dT%H:%M:%S.000Z)" "$1" >> "$HANDFREE_PROJECTS_DIR/p/s.jsonl"; }
+: > "$HANDFREE_PROJECTS_DIR/p/s.jsonl"
+rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Safari hf --listen >/dev/null; sent 'Dictated.'; hf --done >/dev/null
+check "after Stop and the message sent, back to the app Listen was said in" "$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)" "^back to id.Safari$"
+: > "$HANDFREE_PROJECTS_DIR/p/s.jsonl"
+rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Safari hf --listen >/dev/null; hf --done >/dev/null
+check "no message sent: Claude stays on screen" "[$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)]" "\\[\\]"
+sent '<task-notification>x</task-notification>'
+rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Safari hf --listen >/dev/null; hf --done >/dev/null
+check "a notification queued meanwhile is not taken for the message" "[$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)]" "\\[\\]"
+: > "$HANDFREE_PROJECTS_DIR/p/s.jsonl"
+rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Claude hf --listen >/dev/null; sent 'Dictated.'; hf --done >/dev/null
+check "said in Claude, Stop stays in Claude" "[$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)]" "\\[\\]"
+rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Safari hf --reply >/dev/null; sent 'Dictated.'; hf --done >/dev/null
+check "Claude Reply goes back too" "$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)" "^back to id.Safari$"
+rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Safari hf --search-session >/dev/null; sent 'Session name.'; hf --done >/dev/null
+check_not "the Stop that picks a session does not go back yet" "$(cat "$HANDFREE_OPEN_LOG")" "back to"
+HANDFREE_FRONT_APP=Claude hf --listen >/dev/null; sent 'Dictated.'; hf --done >/dev/null
+check "the Listen that follows goes back to where Session was said" "$(cat "$HANDFREE_OPEN_LOG")" "^back to id.Safari$"
+rm -f "$HANDFREE_OPEN_LOG"; printf '{"session_id":"b","transcript_path":"%s/b.jsonl","tool_input":{"questions":["Here?"]}}' "$WORK" | HANDFREE_FRONT_APP=Safari hf --question >/dev/null; sent 'Answer.'; hf --done >/dev/null
+check "answering a question switches no app" "[$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)]" "\\[\\]"
+configure ', "return_to_previous_app": false'
+rm -f "$HANDFREE_OPEN_LOG"; HANDFREE_FRONT_APP=Safari hf --listen >/dev/null; sent 'Dictated.'; hf --done >/dev/null
+check "return_to_previous_app false: Stop stays in Claude" "[$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)]" "\\[\\]"
+configure
+unset HANDFREE_PROJECTS_DIR HANDFREE_RETURN_WAIT_SECONDS
+unset HANDFREE_OPEN_LOG HANDFREE_APP_SESSIONS_DIR HANDFREE_FRONT_APP
 
 hf --off >/dev/null 2>&1
 rm -rf "$WORK"

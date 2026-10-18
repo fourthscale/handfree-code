@@ -21,6 +21,16 @@
             "timeout": 120
           }
         ]
+      },
+      {
+        "matcher": "AskUserQuestion|mcp__.*ccd_session__start_session",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/hook.sh\" --guard-question",
+            "timeout": 30
+          }
+        ]
       }
     ],
     "PostToolUse": [
