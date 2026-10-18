@@ -31,6 +31,7 @@ const CONFIG_PATH = ENV.HANDFREE_CONFIG || `${HOME}/.config/claude-speak.json`
 const STATE_DIR = ENV.HANDFREE_STATE_DIR || `${HOME}/Library/Caches/claude-speak`
 const STATE_PATH = `${STATE_DIR}/state.json`
 const LOCK_PATH = `${STATE_DIR}/state.lock`
+const SPEECH_LOCK_PATH = `${STATE_DIR}/speech.lock`
 const STABLE_COPY = `${HOME}/Library/Application Support/handfree-code/handfree.js`
 // Where the Claude app keeps its Code sessions, one local_<id>.json each, naming the Claude Code session it runs.
 const APP_SESSIONS_DIR = ENV.HANDFREE_APP_SESSIONS_DIR || `${HOME}/Library/Application Support/Claude/claude-code-sessions`
@@ -100,6 +101,7 @@ const SESSION_RULES = {
 
 const DELEGATED_TURN_ORIGINS = ['sdk', 'peer'] // an unknown value, after a Claude Code update, reads the reply
 const LEARNING_TIMEOUT_SECONDS = 120
+const MAX_SEND_BACKS = 3 // written questions sent back in a row with none asked aloud: then Claude is let go
 const RETURN_KEY = 36
 const SEND_WAIT_SECONDS = 5 // for the app to take the text in, then to send it
 const SEND_BUTTON = /^(envoyer|send|senden|absenden)\b/i
@@ -107,6 +109,8 @@ const RETURN_WAIT_SECONDS = 30 // for the dictated message to be sent before goi
 const RETURN_APP_KEPT_SECONDS = 300 // a session search abandoned long ago does not decide where "Stop" goes
 const MAX_READING_WAIT_SECONDS = 60 // the question hook has 120 s in all, its own reading included
 const LOCK_STALE_SECONDS = 10
+const SPEECH_LOCK_STALE_SECONDS = 40 // longer than any line takes to say
+const OTHER_QUESTION_WAIT_SECONDS = 60 // the question hook has 120 s in all
 
 // ---------- system helpers
 
@@ -185,7 +189,18 @@ function macLanguage() {
   return match ? match[1] : 'en'
 }
 
+// One voice at a time, whichever process speaks (the reader, a question, "the rest"): a line waits for the one being said.
 function say(text) {
+  ensureDirectory(STATE_DIR)
+  acquireLock(SPEECH_LOCK_PATH, SPEECH_LOCK_STALE_SECONDS)
+  try {
+    sayNow(text)
+  } finally {
+    releaseLock(SPEECH_LOCK_PATH)
+  }
+}
+
+function sayNow(text) {
   pauseMediaIfPlaying()
   // A program that cannot be started or fails (no network, a wrong key) must never silence the voice: say takes over.
   if (!CONFIG.speak_command || !speakWith('/bin/sh', [CONFIG.speak_command.replace(/^~(?=\/)/, HOME), text.replace(/\[\[slnc \d+\]\]/g, ' ').replace(/\s+/g, ' ').trim()])) {
@@ -288,7 +303,7 @@ function sendMediaCommand(name) {
 // ---------- state, shared by every process, behind a lock
 
 function emptyState() {
-  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, dictating_session: null, reading_requested: false, finishing_current: false, return_app: null, read_before_question: null, reply_before_question: null, detail: null, voice_off: false, prompt_path: null, learning_since: null, media_paused: false, last_speech_end: 0, speaker_pid: null }
+  return { version: STATE_VERSION, current: null, queue: [], announced_id: null, last_speaker: null, reader_pid: null, next_id: 0, dictating_since: null, dictating_session: null, reading_requested: false, finishing_current: false, return_app: null, sent_back: null, read_before_question: null, reply_before_question: null, detail: null, voice_off: false, prompt_path: null, learning_since: null, media_paused: false, last_speech_end: 0, speaker_pid: null }
 }
 
 function withState(change) {
@@ -306,18 +321,18 @@ function withState(change) {
   }
 }
 
-function acquireLock() {
+function acquireLock(path = LOCK_PATH, staleSeconds = LOCK_STALE_SECONDS) {
   const manager = $.NSFileManager.defaultManager
   for (;;) {
-    if (manager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(LOCK_PATH, false, $(), null)) return
-    const attributes = manager.attributesOfItemAtPathError(LOCK_PATH, null)
-    if (!attributes.isNil() && now() - attributes.fileModificationDate.timeIntervalSince1970 > LOCK_STALE_SECONDS) releaseLock()
+    if (manager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(path, false, $(), null)) return
+    const attributes = manager.attributesOfItemAtPathError(path, null)
+    if (!attributes.isNil() && now() - attributes.fileModificationDate.timeIntervalSince1970 > staleSeconds) releaseLock(path)
     delay(0.02)
   }
 }
 
-function releaseLock() {
-  $.NSFileManager.defaultManager.removeItemAtPathError(LOCK_PATH, null)
+function releaseLock(path = LOCK_PATH) {
+  $.NSFileManager.defaultManager.removeItemAtPathError(path, null)
 }
 
 // ---------- transcripts
@@ -354,7 +369,8 @@ function lastReply(entries) {
 function startedByAnotherSession(entries) {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]
-    if (entry.type !== 'user' || !entry.turnOrigin || !promptText(entry).trim()) continue
+    // A hook's feedback (isMeta) continues the turn, it does not start one.
+    if (entry.type !== 'user' || entry.isMeta || !entry.turnOrigin || !promptText(entry).trim()) continue
     // App events are also sdk-originated but arrive wrapped in a tag; briefs and messages do not.
     return DELEGATED_TURN_ORIGINS.includes(entry.turnOrigin) && !promptText(entry).trimStart().startsWith('<')
   }
@@ -427,6 +443,7 @@ function killReader(state) {
   if (state.speaker_pid) shell(`pkill -P ${state.speaker_pid}; kill ${state.speaker_pid}`)
   state.reader_pid = null
   state.speaker_pid = null
+  releaseLock(SPEECH_LOCK_PATH) // a line cut short frees the voice for whoever speaks next
 }
 
 // The session's name is said when the speaker changes; 'always' also says it at every reply and resumed reading.
@@ -513,13 +530,21 @@ const UNSPOKEN_QUESTION = {
 
 function currentTurn(entries) {
   for (let i = entries.length - 1; i >= 0; i--) {
-    if (entries[i].type === 'user' && entries[i].turnOrigin && promptText(entries[i]).trim()) return entries.slice(i + 1)
+    if (entries[i].type === 'user' && !entries[i].isMeta && entries[i].turnOrigin && promptText(entries[i]).trim()) return entries.slice(i + 1)
   }
   return entries
 }
 
-function asksInTheAppBox(turn) {
-  return turn.some((e) => e.type === 'assistant' && ((e.message || {}).content || []).some((b) => b && b.type === 'tool_use' && /wrap_up$/.test(b.name || '') && ((b.input || {}).ask || '').trim()))
+// The question asked in the app's end-of-turn box, if any.
+function appBoxQuestion(turn) {
+  for (const e of turn) {
+    if (e.type !== 'assistant') continue
+    for (const b of (e.message || {}).content || []) {
+      const ask = b && b.type === 'tool_use' && /wrap_up$/.test(b.name || '') ? ((b.input || {}).ask || '').trim() : ''
+      if (ask) return ask
+    }
+  }
+  return ''
 }
 
 function endsOnWrittenQuestion(reply) {
@@ -528,14 +553,30 @@ function endsOnWrittenQuestion(reply) {
 }
 
 // A question only on screen is lost to someone who is not looking: the turn goes on until it is asked aloud.
-// `stop_hook_active` means this turn was already sent back once: do not loop.
+// Every new question is sent back, also later in a turn already sent back once (`stop_hook_active`): a turn that goes
+// on through several questions, one answer after another, asks each of them aloud. What stops a loop: the same
+// question is never sent back twice in a row, nor more than MAX_SEND_BACKS without one asked in between.
 function unspokenQuestionBlock(data, entries, reply) {
-  if (data.stop_hook_active || !questionsCanBeSpoken() || userIsAway()) return null
-  if (!asksInTheAppBox(currentTurn(entries)) && !endsOnWrittenQuestion(reply)) return null
+  if (!questionsCanBeSpoken() || userIsAway()) return null
+  const paragraphs = (reply || '').trim().split(/\n\s*\n/)
+  const written = endsOnWrittenQuestion(reply)
+  const question = written ? paragraphs[paragraphs.length - 1].trim() : appBoxQuestion(currentTurn(entries))
+  if (!question) return null
+  const sendBack = withState((state) => {
+    const previous = state.sent_back && state.sent_back.session === data.session_id ? state.sent_back : null
+    if (data.stop_hook_active && previous && (previous.question === question || previous.count >= MAX_SEND_BACKS)) return false
+    state.sent_back = { session: data.session_id, question, count: data.stop_hook_active && previous ? previous.count + 1 : 1 }
+    // The question comes next: other sessions finish what they are reading, then wait for it. Another session's
+    // question already under way keeps its hold: this one will wait for it to be answered.
+    if (!(isDictating(state) && state.dictating_session !== data.session_id)) {
+      Object.assign(state, { dictating_since: now(), dictating_session: data.session_id, reading_requested: false, finishing_current: true })
+    }
+    return true
+  })
+  if (!sendBack) return null
   const reason = (UNSPOKEN_QUESTION[LANGUAGE] || UNSPOKEN_QUESTION.en).replace('{tool}', CONFIG.question_tool)
   // The reply stays on screen; it is read before the question asked next, without its last paragraph when that is the question.
-  const paragraphs = (reply || '').trim().split(/\n\s*\n/)
-  const text = endsOnWrittenQuestion(reply) ? paragraphs.slice(0, -1).join('\n\n') : paragraphs.join('\n\n')
+  const text = written ? paragraphs.slice(0, -1).join('\n\n') : paragraphs.join('\n\n')
   // A long reply: its summary comes with the question, so the first reading already covers it all.
   const long = CONFIG.summarize_rest && speakableLines(text).length - linesThroughFirstParagraph(text) >= SUMMARY_MIN_LINES
   withState((state) => (state.reply_before_question = text ? { session: data.session_id, text, long } : null))
@@ -667,8 +708,12 @@ function readQuestion() {
   const data = readStdin()
   const entries = readTranscript(data.transcript_path)
   const { context, questions } = splitQuestions((data.tool_input || {}).questions || [])
+  waitForOtherDictation(data.session_id)
   // The queue stays paused: restarting it would talk over the answer being dictated.
   holdReaderAfterCurrentReading(data.session_id)
+  withState((state) => {
+    if (state.sent_back && state.sent_back.session === data.session_id) state.sent_back.count = 0
+  })
   const intro = introFor(data, entries)
   const sentBack = withState((state) => {
     const reply = state.reply_before_question
@@ -676,16 +721,26 @@ function readQuestion() {
     return reply && reply.session === data.session_id ? reply : { text: '' }
   })
   const written = textOfLastMessage(entries)
+  const replyText = uniqueParagraphs(sentBack.text, written)
+  // What Claude put in the question is what it chose to say: read in full, unlike the reply's paragraphs after the first.
+  const ownContext = paragraphsNotIn(context, replyText)
   const before =
     // A long reply: its first paragraph is taken as its summary when Claude gives none with the question.
     sentBack.long
-      ? readSummedUp(data, entries, intro, sentBack.text, context)
-      : readTextBeforeQuestion(data, entries, intro, uniqueParagraphs(sentBack.text, written, context), written)
+      ? readSummedUp(data, entries, intro, sentBack.text, ownContext)
+      : readTextBeforeQuestion(data, entries, intro, replyText, ownContext, written)
   const detailWaits = withState((state) => Boolean(state.detail && state.detail.session === data.session_id))
   // After a summary, the full text it sums up is kept: say how to hear it.
   if (detailWaits) say(`${before ? '' : intro}${PHRASE.detail}`)
   say(`${before || detailWaits ? '' : intro}${PHRASE.question} ${SILENCE} ${questions.join(' ')}`)
   startDictating(data.session_id)
+}
+
+// Another session's question, or a free dictation, is under way: Spokenly takes one at a time, and a question read now
+// would be taken down with that answer. Wait for it to be answered (within the hook's time).
+function waitForOtherDictation(session) {
+  const deadline = now() + OTHER_QUESTION_WAIT_SECONDS
+  while (now() < deadline && withState((state) => isDictating(state) && state.dictating_session !== session)) delay(0.5)
 }
 
 // A question written in several paragraphs carries its context: the last paragraph is the question itself.
@@ -698,6 +753,12 @@ function splitQuestions(items) {
     return paragraphs[paragraphs.length - 1]
   })
   return { context: context.join('\n\n'), questions }
+}
+
+// The paragraphs of `text` that `other` does not have.
+function paragraphsNotIn(text, other) {
+  const known = new Set((other || '').split(/\n\s*\n/).map((p) => p.replace(/\s+/g, ' ').trim()))
+  return (text || '').trim().split(/\n\s*\n/).filter((p) => p.trim() && !known.has(p.replace(/\s+/g, ' ').trim())).join('\n\n')
 }
 
 // The same text, written in the message and copied into the question, is read once.
@@ -716,23 +777,27 @@ function uniqueParagraphs(...texts) {
 
 // What Claude wrote just before asking, or put in the question as its context, is part of its answer: its turn has not
 // ended, so no reply reading will come. Its first paragraph is read before the question; the rest is what "the rest" reads.
-function readTextBeforeQuestion(data, entries, intro, text, written) {
-  if (!text) return ''
-  const lines = speakableLines(text)
-  if (!lines.length) return ''
-  const pauseAt = (CONFIG.first_paragraph_only ? linesThroughFirstParagraph(text) : 0) || lines.length
-  lines.slice(0, pauseAt).forEach((line, i) => {
-    say(`${i === 0 ? intro : ''}${line}`)
+function readTextBeforeQuestion(data, entries, intro, replyText, context, written) {
+  const lines = speakableLines(replyText || '')
+  const contextLines = speakableLines(context || '')
+  if (!lines.length && !contextLines.length) return ''
+  const pauseAt = lines.length ? (CONFIG.first_paragraph_only ? linesThroughFirstParagraph(replyText) : 0) || lines.length : 0
+  let first = true
+  const sayLine = (line) => {
+    say(`${first ? intro : ''}${line}`)
+    first = false
     delay(CONFIG.pause_between_lines_seconds)
-  })
+  }
+  lines.slice(0, pauseAt).forEach(sayLine)
   if (pauseAt < lines.length) say(PHRASE.more)
+  contextLines.forEach(sayLine)
   withState((state) => {
     state.current = { id: state.next_id, session: data.session_id, title: sessionTitle(entries, data.cwd), lines, position: pauseAt, pause_at: pauseAt, more_announced: true }
     state.announced_id = state.next_id
     state.next_id += 1
     state.read_before_question = written ? { session: data.session_id, text: written.trim() } : null
   })
-  return text
+  return replyText || context
 }
 
 // A long reply sent back: its first paragraph, then the summary put in the question; the rest waits for "the details".
@@ -822,11 +887,14 @@ function startDictating(session) {
   })
 }
 
+// "Stop" ends a free dictation. A question's dictation (it has a session) is freed by its answer instead: that comes
+// later, after "the rest" may have the question asked again, and a reading started meanwhile would be taken down.
 function doneDictating() {
   const back = withState((state) => {
-    state.dictating_since = null
-    state.dictating_session = null
-    startReaderUnlessRunning(state)
+    if (!state.dictating_session) {
+      state.dictating_since = null
+      startReaderUnlessRunning(state)
+    }
     // A dictation abandoned without "Stop" leaves a note: too old, it no longer decides.
     const previous = state.return_app
     const due = previous && previous.armed && now() - previous.since < CONFIG.max_dictation_seconds

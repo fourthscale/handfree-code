@@ -45,17 +45,21 @@ Settings come from `~/.config/claude-speak.json`, with defaults in `CONFIG` at t
 4. A session's name is said when the speaker changes (`announce_session`). Music is paused while speaking and resumed after.
 5. Readings from several sessions wait their turn in the queue. A turn started by another session is not read: its parent relays the result.
 
+## One voice at a time
+
+Every line is said under a speech lock (`speech.lock` in the state folder), whichever process says it: the reader, a question, "the rest". A line cut short (Quiet, a question) frees it.
+
 ## Questions
 
 Claude must ask through Spokenly: the app's buttons and box are not read aloud and cannot be answered by voice. The voice rules injected at `SessionStart` say so, and the `Stop` hook enforces it.
 
-1. **The reply stays written.** Claude writes its full reply, question last, and ends its turn. The `Stop` hook sees a reply ending on a question, or a question in the app's end-of-turn box, and sends the turn back (`decision: block`): "ask it with the Spokenly tool, the question alone". The reply, minus its question paragraph, goes to `reply_before_question`. Text written just before a tool call cannot be used instead: the desktop app can store it as a hidden thinking block.
+1. **The reply stays written.** Claude writes its full reply, question last, and ends its turn. The `Stop` hook sees a reply ending on a question, or a question in the app's end-of-turn box, and sends the turn back (`decision: block`): "ask it with the Spokenly tool, the question alone". The reply, minus its question paragraph, goes to `reply_before_question`, and the queue is held from then on: other sessions finish what they are reading and wait for the question. Every new question is sent back, also later in a turn already sent back (Claude Code then sets `stop_hook_active`): a turn that goes through several questions, one answer after another, asks each aloud. What prevents a loop is `sent_back`: the same question is not sent back twice in a row, nor more than three with none asked in between. Text written just before a tool call cannot be used instead: the desktop app can store it as a hidden thinking block.
 2. **A long reply comes summed up.** When more than a few lines follow the first paragraph, the send-back also asks Claude for a two- or three-sentence summary in the question, unless the first paragraph already sums the reply up (as the voice rules ask). With no summary in the question, the first paragraph stands for it: either way, one summary is read, never two.
-3. **Before speaking** (`PreToolUse`, `--question`): the reading under way in any session goes on to its pause (`finishing_current`, at most 60 s), then nothing else starts. Two voices at once are not understood, and Spokenly would record the other one.
-4. **Reading**: the reply's first paragraph, then the summary and "answer 'the details' to hear it all" (the first paragraph alone when it is the summary), then "A question" and the question. The hook then marks the dictation as started.
+3. **Before speaking** (`PreToolUse`, `--question`): another session's question, or a free dictation, under way is waited for first (up to 60 s): Spokenly records one at a time. Then the reading under way in any session goes on to its pause (`finishing_current`, at most 60 s), then nothing else starts. Two voices at once are not understood, and Spokenly would record the other one.
+4. **Reading**: the reply's first paragraph (whatever Claude put in the question itself is read in full: it chose to say it), then the summary and "answer 'the details' to hear it all" (the first paragraph alone when it is the summary), then "A question" and the question. The hook then marks the dictation as started.
 5. **The answer** (`PostToolUse`, `--answered`):
    - "the rest" / "the details": what was left out is read, and the turn is sent back to ask again (`ASK_AGAIN`). A long rest without a summary yet makes Claude ask again with one (`ASK_SUMMARY`). Other sessions keep waiting meanwhile.
-   - Anything else is a real answer: the queue goes on.
+   - Anything else is a real answer: the queue goes on. The answer frees the queue, not "Stop": the key comes first, and a reading started then would talk over the question asked again.
 6. **Questions shown only on screen.** The app's multiple-choice window (`AskUserQuestion`) and its "start this in a new session?" card (`start_session` with `initiation: "offer"`) wait for a click and are never read. A `PreToolUse` hook (`--guard-question`) refuses them in voice mode. The refusal does not stop Claude: it reads the reason as the tool's result and asks through Spokenly instead, which then goes through the steps above.
 7. **Away from the Mac** (no keyboard or mouse for `away_after_idle_seconds`): the Spokenly call is refused and Claude asks in writing; the `Stop` hook no longer sends written questions back.
 
