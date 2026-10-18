@@ -33,7 +33,7 @@ reset; reply a 'A one.\nA two.\n\nA more.'; reply b 'B one.'; wait_quiet 3
 check "replies are queued, each announced" "$(said)" "Session Project Alpha.*A one"
 check "the second session is announced" "$(said)" "Session Project Beta.*B one"
 check_not "only the first paragraph is read" "$(said)" "A more"
-check "the pause after the first paragraph is announced" "$(said)" "There is more."
+check "the pause after the first paragraph is announced" "$(said)" "Details available."
 
 reset; reply a 'Alone.\n\nHidden rest.'; wait_quiet 1.5
 check_not "the rest waits" "$(said)" "Hidden rest"
@@ -58,7 +58,7 @@ check "Stop lets the queue go on" "$(said)" "During the dictation"
 
 reset; reply a 'A long line being read.\nSame paragraph.\n\nNext line.'; sleep 0.3
 printf '{"session_id":"b","transcript_path":"%s/b.jsonl","tool_input":{"questions":["Shall we?"]}}' "$WORK" | hf --question >/dev/null
-check "a question lets the reading under way reach its pause first" "$(said | tr '\n' ' ')" "A long line being read.*Same paragraph.*There is more.*A question.*Shall we"
+check "a question lets the reading under way reach its pause first" "$(said | tr '\n' ' ')" "A long line being read.*Same paragraph.*Details available.*A question.*Shall we"
 printf '{"session_id":"b","transcript_path":"%s/b.jsonl"}' "$WORK" | hf --notify; sleep 1
 check_not "the waiting notice is dropped while the answer is dictated" "$(said)" "Claude needs your answer"
 check_not "and holds the rest until the answer" "$(said)" "Next line"
@@ -90,7 +90,7 @@ check "the asking session's turn end frees the reading, though no answer came" "
 transcript q 'Quiz'
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"Intro para.\\n\\nMore para."}]}}\n' >> "$WORK/q.jsonl"
 reset; printf '{"session_id":"q","transcript_path":"%s/q.jsonl","tool_input":{"questions":["Which one?"]}}' "$WORK" | hf --question >/dev/null
-check "the text before a question is read first" "$(said | tr '\n' ' ')" "Intro para.*There is more.*A question.*Which one"
+check "the text before a question is read first" "$(said | tr '\n' ' ')" "Intro para.*Details available.*A question.*Which one"
 check_not "only its first paragraph" "$(said)" "More para"
 out=$(printf '{"session_id":"q","tool_response":[{"type":"text","text":"Q: Which one?\\nA: La suite. Stop"}]}' | hf --answered)
 check "answering \"the rest\" reads the rest of the text" "$(said)" "More para"
@@ -107,7 +107,7 @@ check "a new reply is read" "$(said)" "Final words"
 transcript k 'Options'
 printf '{"type":"assistant","message":{"id":"m2","content":[{"type":"thinking","thinking":"A summary."}]}}\n' >> "$WORK/k.jsonl"
 reset; printf '{"session_id":"k","transcript_path":"%s/k.jsonl","tool_input":{"questions":["Option A first.\\n\\nOption B second.\\n\\nWhich one?"]}}' "$WORK" | hf --question >/dev/null
-check "a question's own context is read first" "$(said | tr '\n' ' ')" "Option A first.*There is more.*A question.*Which one"
+check "a question's own context is read first" "$(said | tr '\n' ' ')" "Option A first.*Details available.*A question.*Which one"
 check_not "only its first paragraph, not the rest" "$(said)" "Option B second"
 check_not "nor the thinking summary" "$(said)" "A summary"
 out=$(printf '{"session_id":"k","tool_response":[{"type":"text","text":"Q: Which one?\\nA: La suite. Stop"}]}' | hf --answered)
@@ -119,7 +119,7 @@ printf '{"session_id":"k","tool_response":[{"type":"text","text":"Q: Which one?\
 check "and is read once it is answered" "$(said)" "Meanwhile from Beta"
 reset; printf '{"session_id":"k","transcript_path":"%s/k.jsonl","tool_input":{"questions":["Short one?"]}}' "$WORK" | hf --question >/dev/null
 check "a one-paragraph question is read as it is" "$(said | tr '\n' ' ')" "A question.*Short one"
-check_not "with no rest announced" "$(said)" "There is more"
+check_not "with no rest announced" "$(said)" "Details available"
 printf '{"session_id":"k"}' | hf --answered >/dev/null
 
 # The same text written in the message and copied into the question is read once.
@@ -192,10 +192,10 @@ if spokenly_declared; then
   check "its written question is not read as text" "$(said | grep -c 'push')" "^1$"
   printf '{"session_id":"a"}' | hf --answered >/dev/null
   reset; out=$(printf '{"session_id":"a","transcript_path":"%s/a.jsonl","last_assistant_message":"Intro.\\n\\nTwo.\\n\\nThree.\\n\\nFour.\\n\\nWhich one?"}' "$WORK" | hf)
-  check "a long reply sent back asks for its summary with the question" "$out" "summing up your reply"
+  check "a long reply sent back asks for its summary with the question" "$out" "summing up the rest"
   printf '{"session_id":"a","transcript_path":"%s/a.jsonl","tool_input":{"questions":["In short, two to four.\\n\\nWhich one?"]}}' "$WORK" | hf --question >/dev/null
   check "its first paragraph, its summary, how to hear it all, the question" "$(said | tr '\n' ' ')" "Intro.*In short.*the details.*A question.*Which one"
-  check_not "with no rest announced" "$(said)" "There is more"
+  check_not "with no rest announced" "$(said)" "Details available"
   check_not "nor the rest read" "$(said)" "Two"
   out=$(printf '{"session_id":"a","tool_response":[{"type":"text","text":"Q: Which one?\\nA: La suite. Stop"}]}' | hf --answered)
   check "\"the rest\" then reads the reply in full" "$(said | tr '\n' ' ')" "Two.*Three.*Four"
@@ -203,11 +203,11 @@ if spokenly_declared; then
   printf '{"session_id":"a","tool_response":[{"type":"text","text":"Q: Which one?\\nA: The first. Stop"}]}' | hf --answered >/dev/null
   reset; printf '{"session_id":"a","transcript_path":"%s/a.jsonl","last_assistant_message":"Intro.\\n\\nTwo.\\n\\nThree.\\n\\nFour.\\n\\nWhich one?"}' "$WORK" | hf >/dev/null
   printf '{"session_id":"a","transcript_path":"%s/a.jsonl","tool_input":{"questions":["Which one?"]}}' "$WORK" | hf --question >/dev/null
-  check "no summary given: the first paragraph, the rest announced" "$(said | tr '\n' ' ')" "Intro.*There is more.*A question.*Which one"
+  check "no summary given: its first paragraph stands for it, the details offered" "$(said | tr '\n' ' ')" "Intro.*the details.*A question.*Which one"
   out=$(printf '{"session_id":"a","tool_response":[{"type":"text","text":"Q: Which one?\\nA: La suite. Stop"}]}' | hf --answered)
-  check "and \"the rest\" asks for it" "$out" "summing up"
-  printf '{"session_id":"a","tool_response":[{"type":"text","text":"Q: Which one?\\nA: Le détail. Stop"}]}' | hf --answered >/dev/null
-  check "\"the details\" read the reply in full" "$(said | tr '\n' ' ')" "Two.*Three.*Four"
+  check "and \"the rest\" reads the reply in full" "$(said | tr '\n' ' ')" "Two.*Three.*Four"
+  check_not "with no summary asked for" "$out" "summing up"
+  printf '{"session_id":"a","tool_response":[{"type":"text","text":"Q: Which one?\\nA: The first. Stop"}]}' | hf --answered >/dev/null
   stop_hook=$(printf '{"session_id":"a","stop_hook_active":true,"transcript_path":"%s/a.jsonl","last_assistant_message":"Noted."}' "$WORK" | hf); wait_quiet 1.5
   out=$(printf '{"session_id":"a","stop_hook_active":true,"transcript_path":"%s/a.jsonl","last_assistant_message":"Shall I push it?"}' "$WORK" | hf)
   check_not "a reply already sent back once is not sent back again" "$out" "block"

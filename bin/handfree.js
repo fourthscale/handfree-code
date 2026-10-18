@@ -70,9 +70,9 @@ const DEFAULTS = {
 }
 
 const PHRASES = {
-  fr: { session: 'Session {title}.', question: 'Une question.', link: 'lien', code: 'Bloc de code omis.', more: 'Il y a une suite.', detail: 'Pour tout entendre, réponds « le détail ».', voice_on: 'Mode vocal activé.', voice_off: 'Mode vocal désactivé.', permission: 'Autorisation demandée : {action}. Autoriser ?', idle: "Claude t'attend", waiting: 'Claude attend ta réponse' },
-  en: { session: 'Session {title}.', question: 'A question.', link: 'link', code: 'Code block skipped.', more: 'There is more.', detail: 'To hear it all, answer "the details".', voice_on: 'Voice mode on.', voice_off: 'Voice mode off.', permission: 'Permission requested: {action}. Allow?', idle: 'Claude is waiting', waiting: 'Claude needs your answer' },
-  de: { session: 'Sitzung {title}.', question: 'Eine Frage.', link: 'Link', code: 'Codeblock ausgelassen.', more: 'Es gibt noch mehr.', detail: 'Um alles zu hören, antworte „die Details“.', voice_on: 'Sprachmodus an.', voice_off: 'Sprachmodus aus.', permission: 'Erlaubnis angefragt: {action}. Erlauben?', idle: 'Claude wartet', waiting: 'Claude wartet auf deine Antwort' },
+  fr: { session: 'Session {title}.', question: 'Une question.', link: 'lien', code: 'Bloc de code omis.', more: 'Détail disponible.', detail: 'Pour tout entendre, réponds « le détail ».', voice_on: 'Mode vocal activé.', voice_off: 'Mode vocal désactivé.', permission: 'Autorisation demandée : {action}. Autoriser ?', idle: "Claude t'attend", waiting: 'Claude attend ta réponse' },
+  en: { session: 'Session {title}.', question: 'A question.', link: 'link', code: 'Code block skipped.', more: 'Details available.', detail: 'To hear it all, answer "the details".', voice_on: 'Voice mode on.', voice_off: 'Voice mode off.', permission: 'Permission requested: {action}. Allow?', idle: 'Claude is waiting', waiting: 'Claude needs your answer' },
+  de: { session: 'Sitzung {title}.', question: 'Eine Frage.', link: 'Link', code: 'Codeblock ausgelassen.', more: 'Details verfügbar.', detail: 'Um alles zu hören, antworte „die Details“.', voice_on: 'Sprachmodus an.', voice_off: 'Sprachmodus aus.', permission: 'Erlaubnis angefragt: {action}. Erlauben?', idle: 'Claude wartet', waiting: 'Claude wartet auf deine Antwort' },
 }
 
 const SESSION_RULES = {
@@ -82,6 +82,8 @@ const SESSION_RULES = {
     "Y compris la question de fin de tour : les boutons de l'app ne me sont pas lus, je ne peux pas y répondre à la voix. " +
     "Quand la question porte sur un texte (des options, une explication), écris ce texte en entier dans ta réponse, la question à la fin, et termine ton tour sans appeler l'outil : " +
     "on te demandera alors de poser la question seule avec l'outil, et ton texte me sera lu avant. Le texte écrit juste avant un appel d'outil peut être caché dans l'app.\n" +
+    "- Quand ta réponse est longue (plus de deux ou trois paragraphes), commence-la par un paragraphe de deux ou trois phrases qui la résume en entier : " +
+    "c'est lui qui m'est lu, puis « détail disponible » ; le reste seulement si je le demande.\n" +
     "- Je dicte et je valide en disant « {word} » : un « {word} » en fin de message ou de réponse dictée est cette commande, pas une demande d'arrêter. Ignore-le.",
   en:
     'Voice mode is on.\n' +
@@ -89,6 +91,8 @@ const SESSION_RULES = {
     "including the end-of-turn question: the app's buttons are not read to me and I cannot answer them by voice. " +
     "When the question is about some text (options, an explanation), write that text in full in your reply, the question last, and end your turn without calling the tool: " +
     "you will then be asked to put the question alone to the tool, and your text is read to me first. Text written just before a tool call may be hidden in the app.\n" +
+    '- When your reply is long (more than two or three paragraphs), open it with a paragraph of two or three sentences summing it all up: ' +
+    'that is what is read to me, then "details available"; the rest only if I ask for it.\n' +
     '- I dictate and send by saying "{word}": a trailing "{word}" in a dictated message or answer is that command, not a request to stop. Ignore it.',
 }
 
@@ -668,7 +672,8 @@ function readQuestion() {
   })
   const written = textOfLastMessage(entries)
   const before =
-    sentBack.long && context
+    // A long reply: its first paragraph is taken as its summary when Claude gives none with the question.
+    sentBack.long
       ? readSummedUp(data, entries, intro, sentBack.text, context)
       : readTextBeforeQuestion(data, entries, intro, uniqueParagraphs(sentBack.text, written, context), written)
   const detailWaits = withState((state) => Boolean(state.detail && state.detail.session === data.session_id))
@@ -892,8 +897,8 @@ const DETAIL_ANSWERS = ['le détail', 'détail', 'les détails', 'détails', 'mo
 const SUMMARY_MIN_LINES = 3 // a shorter rest is read as it is
 const ASK_AGAIN = 'The user answered that they first want to hear the rest of what you wrote before this question; it has just been read aloud to them. Ask the same question again with the same tool, without repeating that text.'
 const SUMMARY_FIRST =
-  'Your reply is long: in the question, put first one paragraph of two or three sentences summing up your reply after its first paragraph (which is read), ' +
-  'then the question as the last paragraph. The full reply stays on screen, and the user can ask to hear it.'
+  'Your reply is long. Unless its first paragraph (which is read) already sums all of it up, put first in the question one paragraph of two or three ' +
+  'sentences summing up the rest of your reply, then the question as the last paragraph. The full reply stays on screen, and the user can ask to hear it.'
 const ASK_SUMMARY =
   'The user answered that they first want the rest of what you wrote before this question, summed up. Ask the same question again with the same tool: ' +
   'a first paragraph of two or three sentences summing up that rest (everything after its first paragraph, which was read), then the question as the last paragraph. ' +
