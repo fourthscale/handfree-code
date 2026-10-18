@@ -4,7 +4,7 @@ Drive Claude Code by voice on macOS, hands free.
 
 - **Claude talks**: replies and questions are read aloud, with the name of the session speaking. Only the first paragraph is read; say "Claude Continue" for the rest.
 - **You talk**: you dictate with [Spokenly](https://spokenly.app) and send by saying "stop". Claude asks its questions through Spokenly and you answer aloud.
-- **You steer it** with a few spoken commands: "Claude Listen", "Stop", "Claude Quiet", "Claude Continue", "Claude Restart", "Claude Voice mode on/off".
+- **You steer it** with a few spoken commands: "Claude Listen", "Claude Reply", "Claude Session", "Stop", "Claude Quiet", "Claude Continue", "Claude Restart", "Claude Voice mode on/off".
 
 The plugin sets up Claude Code. The macOS side (Shortcuts, Voice Control, permissions) is done by hand, once: macOS does not let a program grant itself these rights.
 
@@ -65,6 +65,8 @@ In the Shortcuts app, create one shortcut per file of [`shortcuts/`](shortcuts) 
 | Shortcut | Action | File |
 |---|---|---|
 | Claude Listen | Run Shell Script | `listen.sh` |
+| Claude Reply | Run Shell Script | `reply.sh` |
+| Claude Session | Run Shell Script | `session.sh` |
 | Stop | Run AppleScript | `stop.applescript` |
 | Claude Quiet | Run Shell Script | `quiet.sh` |
 | Claude Continue | Run Shell Script | `continue.sh` |
@@ -81,6 +83,8 @@ System Settings > Accessibility > Voice Control: turn it on, with the **Mac's** 
 | You say | Shortcut | What it does |
 |---|---|---|
 | Claude Listen | Claude Listen | brings Claude forward, clicks its field, starts Spokenly |
+| Claude Reply | Claude Reply | the same, in the session that spoke last |
+| Claude Session | Claude Session | opens the session search and starts Spokenly: say a session's name, then "Stop" |
 | Stop | Stop | sends the dictation (presses Return) |
 | Claude Quiet | Claude Quiet | cuts the reading |
 | Claude Continue | Claude Continue | reads the rest of the reply |
@@ -115,6 +119,8 @@ Then, in a new Claude session: "ask me a question". The question is read, you an
 ## Usage
 
 - **Claude Listen** → dictate → **Stop**: the message goes to the session on screen, wherever you were.
+- **Claude Reply** → dictate → **Stop**: the message goes to the session that spoke last, even if another one is on screen. A cloud session cannot be opened this way: the session on screen gets it.
+- **Claude Session** → say a session's name → **Stop**: that session opens. Then **Claude Listen**.
 - **A question**: it is read ("Session X. A question. …"), you answer, **Stop** or Enter sends. The answer goes back to the session that asked.
 - **A reply**: the first paragraph is read, then "There is more" if text remains. **Claude Continue** reads the rest, **Claude Restart** reads it all again, **Claude Quiet** cuts it (say it between two lines).
 - **Several sessions**: readings wait their turn. A session's name is said when the speaker changes. Nothing is read while you dictate.
@@ -295,6 +301,7 @@ All optional, in `~/.config/claude-speak.json`:
 | `activate_delay_seconds` | `0.5` | wait after bringing the app forward |
 | `after_click_delay_seconds` | `0.3` | wait after the click |
 | `double_tap_gap_seconds` | `0.12` | gap between the two taps |
+| `open_session_delay_seconds` | `0.8` | wait for the session "Claude Reply" opened to show |
 | `away_after_idle_seconds` | `300` | Mac idle time after which questions go in writing |
 | `voice_permissions` | `false` | answer permission prompts by voice |
 | `permission_answer_seconds` | `90` | how long to wait for the spoken answer |
@@ -321,6 +328,7 @@ The question hooks match any `mcp__…spokenly…__ask_user_dictation` tool. For
 ## What an update can break
 
 - The Claude app may rename its "Prompt" field: the fallback click takes over, and `prompt_name` can be set.
+- "Claude Reply" and "Claude Session" use the app's own links (`claude://code/continue`, `claude://code/search`) and its session files. If they change, "Claude Reply" falls back to the session on screen.
 - Session titles and delegated turns are read from Claude Code's internal transcript format. If it changes, the plugin falls back to the folder name and reads the reply.
 - Pausing music uses a private macOS framework (MediaRemote), restricted since macOS 15.4: there, pausing may stop working. Speaking does not depend on it.
 

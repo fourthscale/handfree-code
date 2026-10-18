@@ -235,6 +235,24 @@ reset; SPEAKER_SECONDS=3 reply a 'Cut short.'; sleep 0.8; hf --stop >/dev/null; 
 check_not "Quiet stops the other voice too" "$(said)" "Cut short"
 configure
 
+# Pointing at a session: links are recorded instead of opened, and no window, click or key happens.
+export HANDFREE_OPEN_LOG="$WORK/links.log" HANDFREE_APP_SESSIONS_DIR="$WORK/app-sessions"
+SID=11111111-2222-3333-4444-555555555555
+mkdir -p "$HANDFREE_APP_SESSIONS_DIR/x/y"
+printf '{"sessionId":"local_abc-1","cliSessionId":"%s","title":"Speaker"}' "$SID" > "$HANDFREE_APP_SESSIONS_DIR/x/y/local_abc-1.json"
+transcript "$SID" 'Speaker'
+reset; reply "$SID" 'Who spoke last.'; wait_quiet 1.5
+hf --reply >/dev/null
+check "Claude Reply opens the session that spoke last" "$(cat "$HANDFREE_OPEN_LOG")" "^claude://code/continue?session=local_abc-1$"
+reply a 'Then another one spoke.'; sleep 0.3; hf --done >/dev/null; wait_quiet 1.5; rm -f "$HANDFREE_OPEN_LOG"
+hf --reply >/dev/null
+check "a speaker the app does not know opens no link" "[$(cat "$HANDFREE_OPEN_LOG" 2>/dev/null)]" "\[\]"
+reset; hf --search-session >/dev/null; reply a 'Not while naming the session.'; sleep 1
+check "Claude Session opens the session search" "$(cat "$HANDFREE_OPEN_LOG")" "^claude://code/search$"
+check_not "and holds the reading while the name is dictated" "$(said)" "Not while naming"
+hf --done >/dev/null; wait_quiet 1.5
+unset HANDFREE_OPEN_LOG HANDFREE_APP_SESSIONS_DIR
+
 hf --off >/dev/null 2>&1
 rm -rf "$WORK"
 [ "$FAILS" -eq 0 ] && echo "ALL PASSED" || { echo "$FAILS FAILED"; exit 1; }

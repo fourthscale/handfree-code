@@ -10,6 +10,8 @@
 //   --answered        PostToolUse on the Spokenly tool: the answer is in, however it was sent; the queue goes on
 // Voice commands (macOS Shortcuts)
 //   --listen          "Claude Listen": silence, bring the app forward, click its message field, start Spokenly
+//   --reply           "Claude Reply": the same, in the session that spoke last
+//   --search-session  "Claude Session": open the app's session search and start Spokenly; "Stop" opens the one named
 //   --done            "Stop": the dictation is sent, the queue goes on
 //   --stop / --resume / --restart   "Claude Quiet" / "Claude Continue" / "Claude Restart"
 //   --on / --off      "Claude Voice mode on" / "Claude Voice mode off" (--toggle: /vocal with no argument)
@@ -27,6 +29,8 @@ const STATE_DIR = ENV.HANDFREE_STATE_DIR || `${HOME}/Library/Caches/claude-speak
 const STATE_PATH = `${STATE_DIR}/state.json`
 const LOCK_PATH = `${STATE_DIR}/state.lock`
 const STABLE_COPY = `${HOME}/Library/Application Support/handfree-code/handfree.js`
+// Where the Claude app keeps its Code sessions, one local_<id>.json each, naming the Claude Code session it runs.
+const APP_SESSIONS_DIR = ENV.HANDFREE_APP_SESSIONS_DIR || `${HOME}/Library/Application Support/Claude/claude-code-sessions`
 
 const DEFAULTS = {
   language: null, // null: the Mac's first language
@@ -49,6 +53,7 @@ const DEFAULTS = {
   activate_delay_seconds: 0.5,
   after_click_delay_seconds: 0.3,
   double_tap_gap_seconds: 0.12,
+  open_session_delay_seconds: 0.8, // wait for the app to show the session "Claude Reply" opened
   away_after_idle_seconds: 300, // keyboard and mouse untouched this long: the user is not at the Mac (on the phone, say)
   // Answer permission prompts by voice. Off by default: a misheard "yes" would allow the action.
   voice_permissions: false,
@@ -764,6 +769,7 @@ function clickPrompt() {
 
 function listen() {
   startDictating()
+  if (ENV.HANDFREE_OPEN_LOG) return // tests: no window, click or key
   Application(CONFIG.target_app).activate()
   delay(CONFIG.activate_delay_seconds)
   const shouldClick = CONFIG.click_prompt === null ? CONFIG.target_app === 'Claude' : CONFIG.click_prompt
@@ -771,11 +777,44 @@ function listen() {
     clickPrompt()
     delay(CONFIG.after_click_delay_seconds)
   }
-  if (CONFIG.spokenly_trigger === 'double_right_command') {
-    tapRightCommand()
-    delay(CONFIG.double_tap_gap_seconds)
-    tapRightCommand()
+  startSpokenly()
+}
+
+function startSpokenly() {
+  if (CONFIG.spokenly_trigger !== 'double_right_command') return
+  tapRightCommand()
+  delay(CONFIG.double_tap_gap_seconds)
+  tapRightCommand()
+}
+
+// The app's links name a session by its own id (local_…); hooks know the Claude Code one, which the app's file records.
+function appSessionId(sessionId) {
+  if (!/^[0-9a-f-]{36}$/.test(sessionId || '')) return null
+  const file = shell(`grep -rlF --include='local_*.json' ${quote(sessionId)} ${quote(APP_SESSIONS_DIR)} | head -1`)
+  return (file.match(/(local_[A-Za-z0-9-]+)\.json$/) || [])[1] || null
+}
+
+function openAppLink(url) {
+  if (ENV.HANDFREE_OPEN_LOG) return writeFile(ENV.HANDFREE_OPEN_LOG, (readFile(ENV.HANDFREE_OPEN_LOG) || '') + url + '\n')
+  shell(`open ${quote(url)}`)
+}
+
+// A cloud session, or one the app does not show, has no link: the session on screen is the one dictated to.
+function reply() {
+  const session = appSessionId(withState((state) => state.last_speaker))
+  if (session) {
+    openAppLink(`claude://code/continue?session=${session}`)
+    if (!ENV.HANDFREE_OPEN_LOG) delay(CONFIG.open_session_delay_seconds)
   }
+  listen()
+}
+
+function searchSession() {
+  startDictating()
+  openAppLink('claude://code/search')
+  if (ENV.HANDFREE_OPEN_LOG) return
+  delay(CONFIG.activate_delay_seconds)
+  startSpokenly()
 }
 
 // A full search of the window takes ~30 s: it runs behind, for the next "Listen".
@@ -828,6 +867,8 @@ const COMMANDS = {
   '--permission': answerPermission,
   '--session-rules': printSessionRules,
   '--listen': listen,
+  '--reply': reply,
+  '--search-session': searchSession,
   '--done': doneDictating,
   '--answered': doneDictating,
   '--dictating': startDictating,
@@ -840,7 +881,7 @@ const COMMANDS = {
   '--read': readQueue,
   '--learn-prompt-path': learnPromptPath,
 }
-const SILENT_WHEN_OFF = ['', '--question', '--notify', '--session-rules', '--listen', '--permission']
+const SILENT_WHEN_OFF = ['', '--question', '--notify', '--session-rules', '--listen', '--reply', '--search-session', '--permission']
 
 function run(argv) {
   const command = argv[0] || ''
