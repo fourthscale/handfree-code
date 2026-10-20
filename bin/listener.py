@@ -5,7 +5,7 @@ Recognition is Vosk's, offline, restricted to the commands' phrases: anything el
 A second recognizer, free, transcribes the same audio: a command it heard as clearly other words is refused.
 A command counts only said alone: set apart by a short silence from anything else heard. What is allowed depends on the plugin's state:
   - voice mode off: the plugin stops this listener altogether ("/vocal on" starts it again); if still running, only
-    "voice mode on";
+    "voice mode on", when a phrase was given to it (it has none by default);
   - a dictation under way (a question, "Listen"): only "Stop" (once a second of silence follows it) and "Cancel";
   - the plugin speaking: only Quiet, Continue and Restart, and not a phrase that is in the text being read;
   - otherwise: every command but "Stop" and "Cancel" (no dictation).
@@ -21,91 +21,44 @@ import unicodedata
 from difflib import SequenceMatcher
 
 HOME = os.path.expanduser("~")
-CONFIG_PATH = os.environ.get("HANDFREE_CONFIG") or os.path.join(HOME, ".config/claude-speak.json")
-STATE_PATH = os.path.join(os.environ.get("HANDFREE_STATE_DIR") or os.path.join(HOME, "Library/Caches/claude-speak"), "state.json")
+# The second of each: its name before 0.3.2, until the plugin moves it.
+CONFIG_PATH = os.environ.get("HANDFREE_CONFIG") or next(
+    (p for p in (os.path.join(HOME, ".config/handfree-code.json"), os.path.join(HOME, ".config/claude-speak.json")) if os.path.exists(p)),
+    os.path.join(HOME, ".config/handfree-code.json"))
+STATE_PATH = os.path.join(os.environ.get("HANDFREE_STATE_DIR") or next(
+    (p for p in (os.path.join(HOME, "Library/Caches/handfree-code/state.json"), os.path.join(HOME, "Library/Caches/claude-speak/state.json"))
+     if os.path.exists(p)), os.path.join(HOME, "Library/Caches/handfree-code/state.json")).rsplit("/", 1)[0], "state.json")
 SUPPORT_DIR = os.path.join(HOME, "Library/Application Support/handfree-code")
 SCRIPT = os.environ.get("HANDFREE_SCRIPT") or os.path.join(SUPPORT_DIR, "handfree.js")
 MODELS = {"fr": "vosk-model-small-fr-0.22", "en": "vosk-model-small-en-us-0.15", "de": "vosk-model-small-de-0.15"}
-MAX_DICTATION_SECONDS = 180  # as the plugin's own default: an older dictation no longer holds
+MAX_DICTATION_SECONDS = 180  # the plugin's default for max_dictation_seconds: an older dictation no longer holds
 REPEAT_SECONDS = 1.5  # the same command heard twice in a row is said once
 INPUT_CHECK_SECONDS = 4  # how often the system's default microphone is checked (headphones put on, AirPods)
-PAUSE_SECONDS = 0.3
+PAUSE_SECONDS = 0.3  # a command set apart by this much silence counts as said alone, whatever noise is around it
 FREE_MATCH = 0.8  # how close the free transcription must be to a command phrase
 FREE_MARGIN_SECONDS = 0.3  # the free transcription compared is what was said while the command was, give or take this
-STOP_SILENCE_SECONDS = 1.0  # "Stop" sends only once this much silence follows: said inside a sentence, speech goes on  # a command set apart by this much silence counts as said alone, whatever noise is around it
+STOP_SILENCE_SECONDS = 1.0  # "Stop" sends only once this much silence follows: said inside a sentence, speech goes on
 RETURN_KEY = 36
 ESCAPE_KEY = 53
 LOG_PATH = os.path.join(HOME, "Library/Logs/handfree-listener.log")
 LOG_MAX_BYTES = 200_000  # beyond, the log keeps only its last lines: it never fills the disk
 LOG_KEPT_LINES = 500
+APP_PORT = int(os.environ.get("HANDFREE_APP_PORT", 51290))  # the Handfree Code app
+AUDIO_PORT = int(os.environ.get("HANDFREE_AUDIO_PORT", 51291))  # the app's microphone, sent to this listener (16 kHz, 16-bit mono)
+APP_SECRET_FILE = os.environ.get("HANDFREE_APP_SECRET_FILE") or os.path.join(SUPPORT_DIR, "app-secret")  # made by the app
+NO_KEYS = os.environ.get("HANDFREE_NO_KEYS") == "1"  # tests: never press a real key through System Events
+APP_WAIT_SECONDS = 15  # how long the app is waited for at start (it may be starting too) before using the microphone here
 
-# Command -> plugin argument. "stop" also presses Return: it sends the dictation, as Voice Control's "Stop" did.
-COMMANDS = {
-    "listen": "--listen",
-    "reply": "--reply",
-    "session": "--search-session",
-    "stop": "--done",
-    "cancel": "--cancel",
-    "quiet": "--stop",
-    "continue": "--resume",
-    "restart": "--restart",
-    "voice_on": "--on",
-    "voice_off": "--off",
-}
+# Command -> plugin argument, and the default phrases per language (lowercase, several may lead to one command), shared
+# with the app's settings. "stop" also presses Return: it sends the dictation, as Voice Control's "Stop" did.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "voice-commands.json"), encoding="utf-8") as f:
+    _defaults = json.load(f)
+COMMANDS = _defaults["commands"]
+PHRASES = _defaults["phrases"]
 WHILE_SPEAKING = {"quiet", "continue", "restart"}
 WHILE_DICTATING = {"stop", "cancel"}
-# Default phrases, lowercase. Several may lead to one command.
-PHRASES = {
-    "fr": {
-        "listen": ["claude écoute"],
-        "reply": ["claude réponds"],
-        "session": ["claude session"],
-        "stop": ["stop"],
-        "cancel": ["claude annule"],
-        "quiet": ["claude chut", "claude silence", "claude tais-toi"],
-        "continue": ["claude continue"],
-        "restart": ["claude recommence"],
-        "voice_on": ["claude mode vocal activé"],
-        "voice_off": ["claude mode vocal désactivé"],
-    },
-    "en": {
-        "listen": ["claude listen"],
-        "reply": ["claude reply"],
-        "session": ["claude session"],
-        "stop": ["stop"],
-        "cancel": ["claude cancel"],
-        "quiet": ["claude quiet"],
-        "continue": ["claude continue"],
-        "restart": ["claude restart"],
-        "voice_on": ["claude voice mode on"],
-        "voice_off": ["claude voice mode off"],
-    },
-    "de": {
-        "listen": ["claude zuhören"],
-        "reply": ["claude antworten"],
-        "session": ["claude sitzung"],
-        "stop": ["stopp"],
-        "cancel": ["claude abbrechen"],
-        "quiet": ["claude ruhe"],
-        "continue": ["claude weiter"],
-        "restart": ["claude neu"],
-        "voice_on": ["claude sprachmodus an"],
-        "voice_off": ["claude sprachmodus aus"],
-    },
-}
 # The names the Voice Control setup used in `voice_commands`: a phrase chosen there is kept.
-OLD_NAMES = {
-    "Claude Listen": "listen",
-    "Claude Reply": "reply",
-    "Claude Session": "session",
-    "Stop": "stop",
-    "Claude Cancel": "cancel",
-    "Claude Quiet": "quiet",
-    "Claude Continue": "continue",
-    "Claude Restart": "restart",
-    "Claude Voice mode on": "voice_on",
-    "Claude Voice mode off": "voice_off",
-}
+OLD_NAMES = _defaults["old_names"]
 
 
 def read_json(path):
@@ -135,8 +88,9 @@ def language(config):
 
 def phrases(config, lang):
     """Phrase -> command, the defaults of the language and the user's own (`voice_commands`)."""
-    table = {command: list(said) for command, said in PHRASES[lang].items()}
-    for name, said in (config.get("voice_commands") or {}).items():
+    table = {command: list(said) for command, said in PHRASES[lang].items()}  # "voice_on" has none: see the JSON
+    # An old Voice Control name first: the command's own id, as the app writes it, wins.
+    for name, said in sorted((config.get("voice_commands") or {}).items(), key=lambda item: item[0] not in OLD_NAMES):
         command = OLD_NAMES.get(name, name)
         if command in table and isinstance(said, (str, list)):
             table[command] = [said] if isinstance(said, str) else said
@@ -157,8 +111,10 @@ def speaking(state):
 
 
 def dictating(state):
+    """As the plugin judges it (isHeld in handfree.js), with the same setting."""
     since = state.get("dictating_since")
-    return bool(since) and time.time() - float(since) < MAX_DICTATION_SECONDS
+    limit = read_json(CONFIG_PATH).get("max_dictation_seconds") or MAX_DICTATION_SECONDS
+    return bool(since) and time.time() - float(since) < float(limit)
 
 
 def text_being_read(state):
@@ -226,8 +182,34 @@ def decide(heard, state, table):
     return command, ""
 
 
+def app_secret():
+    """The Handfree Code app's secret: it hears only programs of this user (not a web page) for keys and sound."""
+    try:
+        with open(APP_SECRET_FILE, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 def press(key):
-    # The key goes to the app in front (Spokenly's recorder, Claude's field): Return sends, Escape cancels.
+    """The key goes to the app in front (the dictation window, Claude's field): Return sends, Escape cancels.
+
+    The Handfree Code app presses it, with its own Accessibility permission. Without the app, System Events does,
+    which needs Python's.
+    """
+    import urllib.request
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "keys/press",
+                       "params": {"key": "escape" if key == ESCAPE_KEY else "return"}}).encode()
+    try:
+        headers = {"Content-Type": "application/json", "X-Handfree-Secret": app_secret()}
+        request = urllib.request.Request(f"http://127.0.0.1:{APP_PORT}/", body, headers)
+        with urllib.request.urlopen(request, timeout=2) as answer:
+            if "result" in json.loads(answer.read() or b"{}"):
+                return
+    except (OSError, ValueError):
+        pass
+    if NO_KEYS:
+        return
     subprocess.run(["osascript", "-e", 'tell application "System Events" to key code %d' % key], check=False)
 
 
@@ -255,7 +237,8 @@ def default_input():
 
 
 def follow_default_input(name):
-    """When the default microphone changes, start over on the new one: the service brings this listener back at once."""
+    """When the default microphone changes, or the app's sound comes back, start over: the service brings this
+    listener back at once."""
     import threading
 
     def watch():
@@ -265,8 +248,54 @@ def follow_default_input(name):
             if now and now != name:
                 log(f"microphone changed: {name} -> {now}, starting over")
                 os._exit(0)
+            stream = app_audio(0)
+            if stream:
+                stream.close()
+                log("the app's sound is back, starting over on it")
+                os._exit(0)
 
     threading.Thread(target=watch, daemon=True).start()
+
+
+def app_audio(wait_seconds):
+    """A connection to the app's microphone, or None when the app does not answer within `wait_seconds`.
+
+    The app's secret goes first: it sends its sound to no one else."""
+    import socket
+    deadline = time.time() + wait_seconds
+    while True:
+        try:
+            stream = socket.create_connection(("127.0.0.1", AUDIO_PORT), timeout=2)
+            stream.sendall(app_secret().encode() + b"\n")
+            return stream
+        except OSError:
+            if time.time() >= deadline:
+                return None
+            time.sleep(1)
+
+
+def read_app_audio(stream, audio):
+    """The app's sound into the queue, a quarter of a second at a time. The app gone, start over (see above)."""
+    import threading
+
+    def read():
+        stream.settimeout(None)
+        left = b""  # a sample cut in two by the network: its first byte waits for the second
+        while True:
+            try:
+                chunk = stream.recv(8000)
+            except OSError:
+                chunk = b""
+            if not chunk:
+                log("the app's sound stopped, starting over")
+                os._exit(0)
+            chunk = left + chunk
+            cut = len(chunk) - len(chunk) % 2
+            chunk, left = chunk[:cut], chunk[cut:]
+            if chunk:
+                audio.put(chunk)
+
+    threading.Thread(target=read, daemon=True).start()
 
 
 def log(line):
@@ -283,8 +312,8 @@ def log(line):
 
 
 def listen():
+    import contextlib
     import queue
-    import sounddevice as sd
     from vosk import KaldiRecognizer, Model, SetLogLevel
 
     SetLogLevel(-1)
@@ -292,11 +321,19 @@ def listen():
     lang = language(config)
     model_dir = os.path.join(SUPPORT_DIR, "models", MODELS[lang])
     table = phrases(config, lang)
-    device = config.get("listener_device")  # part of an input's name; the system's default input otherwise
-    microphone = sd.query_devices(device, "input")
-    rate = int(microphone["default_samplerate"])
-    if not device:
+    audio = queue.Queue()
+    # The app's microphone (the one chosen in its settings), so the app alone uses it; this process's own without the app.
+    stream = app_audio(APP_WAIT_SECONDS)
+    if stream:
+        rate, source, where = 16000, contextlib.nullcontext(), "the app's microphone"
+        read_app_audio(stream, audio)
+    else:
+        import sounddevice as sd
+        microphone = sd.query_devices(None, "input")
+        rate, where = int(microphone["default_samplerate"]), microphone["name"]
         follow_default_input(microphone["name"])
+        source = sd.RawInputStream(samplerate=rate, blocksize=rate // 4, dtype="int16", channels=1,
+                                   callback=lambda data, frames, when, status: audio.put(bytes(data)))
     model = Model(model_dir)
     recognizer = KaldiRecognizer(model, rate, json.dumps(list(table) + ["[unk]"], ensure_ascii=False))
     recognizer.SetWords(True)
@@ -304,11 +341,9 @@ def listen():
     free.SetWords(True)
     free.SetPartialWords(True)
     free_words = []  # its recent words, with their times in the stream (the same clock as the grammar's)
-    audio = queue.Queue()
     last = (None, 0.0)
-    log(f"listening on {microphone['name']} ({lang}, {rate} Hz): {', '.join(sorted(table))}")
-    with sd.RawInputStream(samplerate=rate, blocksize=rate // 4, device=device, dtype="int16", channels=1,
-                           callback=lambda data, frames, when, status: audio.put(bytes(data))):
+    log(f"listening on {where} ({lang}, {rate} Hz): {', '.join(sorted(table))}")
+    with source:
         pending_stop = None  # when a "Stop" was heard, waiting for the silence that confirms it
 
         def free_text(start, end):
@@ -334,7 +369,7 @@ def listen():
                         continue
                     last = ("stop", time.time())
                     chime(config)
-                    log('"stop": stop')
+                    log(f'"stop": stop (heard as "{said}")')
                     run("stop")
                 continue
             result = json.loads(recognizer.Result())
@@ -366,7 +401,7 @@ def listen():
                 continue
             last = (command, time.time())
             chime(config)
-            log(f'"{heard}": {command}')
+            log(f'"{heard}": {command} (heard as "{said}")')
             run(command)
 
 
@@ -381,6 +416,10 @@ def main():
         words = [{"word": w, "start": a, "end": b} for w, a, b in json.loads(sys.argv[2])]
         found = isolated_command(words, phrases(config, language(config)))
         print(found[0] if found else "none")
+        return
+    if len(sys.argv) > 2 and sys.argv[1] == "--press":
+        # For tests: press Return or Escape as "Stop" and "Cancel" do.
+        press(ESCAPE_KEY if sys.argv[2] == "escape" else RETURN_KEY)
         return
     if len(sys.argv) > 2 and sys.argv[1] == "--check":
         config = read_json(CONFIG_PATH)

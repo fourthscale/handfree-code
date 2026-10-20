@@ -43,8 +43,8 @@ if [ "$(printf '%s\n' 15.4 "$MACOS" | sort -t. -k1,1n -k2,2n | head -1)" = 15.4 
   fi
 fi
 
-[ "$HERE" = "$SUPPORT" ] || cp "$HERE/listener.py" "$SUPPORT/listener.py"
-[ -f "$SUPPORT/handfree.js" ] || cp "$HERE/handfree.js" "$SUPPORT/handfree.js"
+# The scripts the listener runs, copied by the plugin's own list (handfree.js STABLE_FILES).
+[ "$HERE" = "$SUPPORT" ] || osascript -l JavaScript "$HERE/handfree.js" --refresh-stable-copy >/dev/null
 
 MODEL=$("$VENV/bin/python" -c 'import sys; sys.path.insert(0, sys.argv[1]); import listener as l; print(l.MODELS[l.language(l.read_json(l.CONFIG_PATH))])' "$SUPPORT" 2>/dev/null)
 if [ ! -d "$MODELS/$MODEL" ]; then
@@ -75,15 +75,13 @@ EOF
 launchctl bootout "$DOMAIN" "$PLIST" 2>/dev/null || true
 launchctl bootstrap "$DOMAIN" "$PLIST"
 
-# The listener runs in Python's app: that is what macOS must allow to start Spokenly and press Return ("Stop").
-PYTHON_APP=$("$VENV/bin/python" -c 'import os, sys; b = os.path.realpath(sys.executable); print(os.path.normpath(os.path.join(os.path.dirname(b), "..", "Resources", "Python.app")))')
 echo "Listener running ($MODEL). Its log: $LOG"
 echo
-echo "One permission to give, once: System Settings > Privacy & Security > Accessibility > allow Python."
-if [ -d "$PYTHON_APP" ]; then
-  echo "It is this app (opened in the Finder, drag it into the list): $PYTHON_APP"
-  open -R "$PYTHON_APP" || true
+# The Handfree Code app records for it and presses Return ("Stop") for it: Python needs no permission, unless the app
+# is missing (then Python records, and presses keys through System Events).
+if [ -d "$HOME/Applications/Handfree Code.app" ]; then
+  echo "The Handfree Code app gives it the microphone and presses Return for it: allow Handfree Code in Accessibility (the app asks)."
+else
+  echo "Without the Handfree Code app, the listener records and presses Return itself: allow Python in"
+  echo "Privacy & Security > Microphone and > Accessibility, then restart it:  launchctl kickstart -k $DOMAIN/$LABEL"
 fi
-open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" || true
-echo "The microphone: macOS asks once, or allow Python in Privacy & Security > Microphone."
-echo "Then restart it:  launchctl kickstart -k $DOMAIN/$LABEL"

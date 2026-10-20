@@ -1,2 +1,8 @@
 .DS_Store
-.claude/
+# Claude Code: the project's rules are shared, the rest (local settings, scratch files) stays on each Mac.
+.claude/*
+!.claude/rules/
+
+# The native app
+app/.build/
+app/build/
