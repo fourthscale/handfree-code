@@ -65,6 +65,9 @@ for bundle in "$BIN"/*.bundle; do [ -e "$bundle" ] && cp -R "$bundle" "$BUILD/Co
 cp -R "$HERE"/Resources/*.lproj "$BUILD/Contents/Resources/"
 cp "$PLUGIN/bin/mcp-relay.sh" "$BUILD/Contents/Resources/mcp-relay.sh"
 cp "$PLUGIN/bin/voice-commands.json" "$BUILD/Contents/Resources/voice-commands.json"
+# The app runs the plugin's scripts from the stable copy, by the commands of the same version (its buttons, its
+# shortcuts): that copy is brought to this version too, not left until the next session starts.
+osascript -l JavaScript "$PLUGIN/bin/handfree.js" --refresh-stable-copy >/dev/null
 # The icon: the halo, drawn by the app itself, at every size macOS asks for.
 ICONSET="$HERE/build/AppIcon.iconset"; rm -rf "$ICONSET"; mkdir -p "$ICONSET"
 if "$BIN/HandfreeCode" --render-icon "$HERE/build/icon.png" 2>/dev/null; then

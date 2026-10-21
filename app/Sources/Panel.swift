@@ -54,8 +54,9 @@ struct QuietButton: View {
       Button { monitor.quiet() } label: {
         HStack(spacing: 5) {
           Image(systemName: "stop.fill")
-          Text("Stop reading")
+          Text("Stop reading").lineLimit(1)
         }
+        .fixedSize()
         .font(.system(size: size, weight: .semibold))
         .padding(.horizontal, size * 0.7)
         .padding(.vertical, size * 0.35)
@@ -137,10 +138,7 @@ struct PanelView: View {
         }
         Spacer(minLength: 0)
         VStack(alignment: .trailing, spacing: 8) {
-          HStack(spacing: 6) {
-            QuietButton(monitor: monitor, size: 11)
-            VoiceButton(monitor: monitor, size: 11)
-          }
+          VoiceButton(monitor: monitor, size: 11)
           HStack(spacing: 10) {
             Button(action: openSettings) { Image(systemName: "gearshape").font(.system(size: 12)) }
               .buttonStyle(.plain).foregroundStyle(.secondary).help("Settings and services")
@@ -158,6 +156,13 @@ struct PanelView: View {
 
   @ViewBuilder private var activePart: some View {
     VStack(alignment: .leading, spacing: 12) {
+      // Above the text being read, always the same height: the text does not move when the button comes and goes.
+      HStack {
+        Spacer(minLength: 0)
+        QuietButton(monitor: monitor, size: 11)
+      }
+      .frame(height: 22)
+      .padding(.bottom, -6)
       ZStack(alignment: .topLeading) {
         RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.06))
         Text(monitor.line ?? placeholder(monitor.activity))
@@ -172,7 +177,7 @@ struct PanelView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing).padding(6)
         }
       }
-      .frame(height: 104)
+      .frame(height: 96)
       .animation(.easeInOut(duration: 0.3), value: monitor.line)
 
       VStack(alignment: .leading, spacing: 5) {

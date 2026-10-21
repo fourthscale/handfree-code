@@ -755,6 +755,7 @@ check "install: the transport script follows HANDFREE_CONFIG" "$(cat "$WORK/tran
 for installer in install.sh install-bridge.sh install-listener.sh set-question-transport.sh; do
   check "install: $installer copies through the plugin's one list" "$(grep -c 'handfree.js" --refresh-stable-copy' "$ROOT/bin/$installer")" "^[1-9]"
 done
+check "install: the app's install brings the scripts to its own version" "$(grep -c 'handfree.js" --refresh-stable-copy' "$ROOT/app/install.sh")" "^[1-9]"
 rm -rf "$WORK/support"/*; printf '99.0.0\n' > "$WORK/support/version"; hf --refresh-stable-copy >/dev/null
 check "install: an install copies even over a newer version" "$(ls "$WORK/support")" "listener.py"
 check "install: and records the version it copied" "$(cat "$WORK/support/version")" "^$VERSION$"
