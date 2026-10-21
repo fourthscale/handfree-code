@@ -240,46 +240,58 @@ printf '{"session_id":"b","tool_response":[{"type":"text","text":"Q: Which?\\nA:
 reset; printf '{"session_id":"a","transcript_path":"%s/a.jsonl"}' "$WORK" | hf --notify; wait_quiet 1.5
 check "the waiting notice names its session" "$(said)" "Session Project Alpha.*Claude needs your answer"
 
-reset; hf --off >/dev/null; reply a 'Muted.'; rules=$(hf --session-rules); sleep 1
+reset; hf --off >/dev/null; reply a 'Muted.'; rules=$(hf --session-rules </dev/null); sleep 1
 check "switching off is said" "$(said)" "Voice mode off."
 check_not "nothing is read while off" "$(said)" "Muted"
 check "no rules are injected while off" "[$rules]" "\[\]"
 hf --toggle >/dev/null
 check "switching back on is said" "$(said)" "Voice mode on."
 
+# Voice mode switched during a session: the session hears of it with its next message, once.
+sent() { printf '{"session_id":"%s","prompt":"Go."}' "$1" | hf --prompt-sent; }
+hf --off >/dev/null; printf '{"session_id":"v"}' | hf --session-rules >/dev/null; hf --on >/dev/null
+check "a session started with voice mode off gets the rules with its next message" "$(sent v)" "UserPromptSubmit.*Voice mode is on"
+check "and not again with the one after" "[$(sent v)]" "^\[\]$"
+hf --off >/dev/null
+check "switched off, the session is told the rules no longer apply" "$(sent v)" "Voice mode is off"
+check "and only once" "[$(sent v)]" "^\[\]$"
+hf --on >/dev/null
+check "a session given the rules at its start is not given them again" "[$(printf '{"session_id":"w"}' | hf --session-rules >/dev/null; sent w)]" "^\[\]$"
+reset
+
 echo "<plist/>" > "$WORK/agents/com.handfree-code.bridge.plist"; rm -f "$WORK/support/bridge-server.py" "$WORK/restarted.log"
-hf --session-rules >/dev/null
+hf --session-rules </dev/null >/dev/null
 check "a new bridge-server.py in the stable copy restarts the bridge" "$(cat "$WORK/restarted.log" 2>/dev/null)" "com.handfree-code.bridge"
 check_not "and not the listener, not installed" "$(cat "$WORK/restarted.log" 2>/dev/null)" "listener"
-rm -f "$WORK/restarted.log"; hf --session-rules >/dev/null
+rm -f "$WORK/restarted.log"; hf --session-rules </dev/null >/dev/null
 check "an unchanged one does not" "[$(cat "$WORK/restarted.log" 2>/dev/null)]" "^\[\]$"
-hf --off >/dev/null; rm -f "$WORK/support/bridge-server.py"; hf --session-rules >/dev/null; hf --on >/dev/null; reset
+hf --off >/dev/null; rm -f "$WORK/support/bridge-server.py"; hf --session-rules </dev/null >/dev/null; hf --on >/dev/null; reset
 check "voice mode off, a new session still refreshes the stable copy" "$(ls "$WORK/support")" "bridge-server.py"
 # A session still on an older plugin version must not put its scripts back over a newer copy.
 VERSION=$(/usr/bin/python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")
 check "the stable copy records the version it came from" "$(cat "$WORK/support/version" 2>/dev/null)" "^$VERSION$"
-printf '99.0.0\n' > "$WORK/support/version"; rm -f "$WORK/support/bridge-server.py" "$WORK/restarted.log"; hf --session-rules >/dev/null
+printf '99.0.0\n' > "$WORK/support/version"; rm -f "$WORK/support/bridge-server.py" "$WORK/restarted.log"; hf --session-rules </dev/null >/dev/null
 check_not "an older plugin version leaves a newer stable copy alone" "$(ls "$WORK/support")" "bridge-server.py"
 check "and restarts nothing" "[$(cat "$WORK/restarted.log" 2>/dev/null)]" "^\[\]$"
-printf '0.0.1\n' > "$WORK/support/version"; hf --session-rules >/dev/null
+printf '0.0.1\n' > "$WORK/support/version"; hf --session-rules </dev/null >/dev/null
 check "a newer plugin version refreshes it" "$(ls "$WORK/support")" "bridge-server.py"
 check "the stable copy carries set-question-transport.sh, as the install does" "$(ls "$WORK/support"; grep -c set-question-transport.sh "$ROOT/bin/install.sh")" "set-question-transport.sh"
 
 printf '{"say_path": "%s", "language": "en", "validation_word": "banana"}\n' "$ROOT/tests/fake-say.sh" > "$HANDFREE_CONFIG"
-check "rules follow the language and validation word" "$(hf --session-rules)" 'saying "banana"'
-check "no rules when Claude's settings do not declare the dictation tool" "[$(HANDFREE_CLAUDE_JSON="$WORK/none.json" hf --session-rules)]" "\[\]"
+check "rules follow the language and validation word" "$(hf --session-rules </dev/null)" 'saying "banana"'
+check "no rules when Claude's settings do not declare the dictation tool" "[$(HANDFREE_CLAUDE_JSON="$WORK/none.json" hf --session-rules </dev/null)]" "\[\]"
 printf '{"say_path": "%s", "language": "de"}\n' "$ROOT/tests/fake-say.sh" > "$HANDFREE_CONFIG"
-check "the validation word is the language's Stop phrase (stopp in German)" "$(hf --session-rules)" '"stopp"'
+check "the validation word is the language's Stop phrase (stopp in German)" "$(hf --session-rules </dev/null)" '"stopp"'
 set_transport() { printf '{"say_path": "%s", "language": "en", "question_transport": {"local": "%s", "cloud": "%s"}}\n' "$ROOT/tests/fake-say.sh" "$1" "$2" > "$HANDFREE_CONFIG"; }
 set_transport none bridge
-check "transport none: no voice rules" "[$(hf --session-rules)]" "\[\]"
+check "transport none: no voice rules" "[$(hf --session-rules </dev/null)]" "\[\]"
 set_transport bridge bridge
-check "local bridge with the dictation up: rules" "$(HANDFREE_DICTATION_UP=1 hf --session-rules)" "Voice mode is on"
-check "local bridge with the dictation down: no rules" "[$(HANDFREE_DICTATION_UP=0 hf --session-rules)]" "\[\]"
+check "local bridge with the dictation up: rules" "$(HANDFREE_DICTATION_UP=1 hf --session-rules </dev/null)" "Voice mode is on"
+check "local bridge with the dictation down: no rules" "[$(HANDFREE_DICTATION_UP=0 hf --session-rules </dev/null)]" "\[\]"
 set_transport mcp none
-check "cloud transport none: no rules for a cloud session" "[$(HANDFREE_CONTEXT=cloud hf --session-rules)]" "\[\]"
+check "cloud transport none: no rules for a cloud session" "[$(HANDFREE_CONTEXT=cloud hf --session-rules </dev/null)]" "\[\]"
 set_transport mcp bridge
-check "cloud bridge with the dictation up: rules for a cloud session" "$(HANDFREE_CONTEXT=cloud HANDFREE_DICTATION_UP=1 hf --session-rules)" "Voice mode is on"
+check "cloud bridge with the dictation up: rules for a cloud session" "$(HANDFREE_CONTEXT=cloud HANDFREE_DICTATION_UP=1 hf --session-rules </dev/null)" "Voice mode is on"
 configure
 
 reset; out=$(printf '{"session_id":"a","transcript_path":"%s/a.jsonl","last_assistant_message":"Done.\\n\\nShall I push it?"}' "$WORK" | hf); sleep 1

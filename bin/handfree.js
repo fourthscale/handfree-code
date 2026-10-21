@@ -9,7 +9,8 @@
 //                     (voice mode off too)
 //   --guard-question  PreToolUse on AskUserQuestion, the app's session offer and end-of-turn question: sends Claude to the dictation tool instead
 //   --permission      PermissionRequest: reads the request, answers it from a spoken yes or no (voice_permissions)
-//   --prompt-sent     UserPromptSubmit: a message sent (Return, a click) ends a free dictation that "Stop" did not
+//   --prompt-sent     UserPromptSubmit: a message sent (Return, a click) ends a free dictation that "Stop" did not;
+//                     a session that has not heard voice mode was switched is told with it (voice mode off too)
 //   --answered        PostToolUse on the dictation tool: the answer is in, however it was sent; the queue goes on.
 //                     Answered "the rest": the rest of the text before the question is read, and Claude asks again
 // Spoken commands (bin/listener.py runs them)
@@ -107,6 +108,7 @@ const TEXTS = {
         "- Quand ta réponse est longue (plus de deux ou trois paragraphes), commence-la par un paragraphe de deux ou trois phrases qui la résume en entier : " +
         "c'est lui qui m'est lu, puis « détail disponible » ; le reste seulement si je le demande.\n" +
         "- Je dicte et je valide en disant « {word} » : un « {word} » en fin de message ou de réponse dictée est cette commande, pas une demande d'arrêter. Ignore-le.",
+      voice_off: "Mode vocal désactivé : les règles vocales données plus tôt dans cette session ne s'appliquent plus. Pose tes questions comme d'habitude.",
       unspoken_question: "Ce tour se termine sur une question posée seulement à l'écrit ou dans la boîte de l'app : l'utilisateur pilote à la voix et ne peut pas y répondre. Pose-la maintenant avec l'outil `{tool}`, la question seule : ta réponse est affichée et lui est lue avant. Puis termine sans la répéter à l'écrit.",
       screen_only_question: "Mode vocal actif : cette question s'affiche seulement à l'écran, l'utilisateur ne l'entend pas et ne peut pas y répondre à la voix. Pose-la avec l'outil `{tool}` à la place (la question seule ; le texte qu'elle concerne va dans ta réponse écrite).",
       screen_only_session_offer: "Mode vocal actif : cette proposition attend un clic à l'écran, l'utilisateur ne l'entend pas. Demande-lui avec l'outil `{tool}` s'il veut cette tâche dans une nouvelle session ou ici. S'il choisit une nouvelle session, lance-la (initiation \"user_asked\") ; sinon fais-la ici.",
@@ -128,6 +130,7 @@ const TEXTS = {
         '- When your reply is long (more than two or three paragraphs), open it with a paragraph of two or three sentences summing it all up: ' +
         'that is what is read to me, then "details available"; the rest only if I ask for it.\n' +
         '- I dictate and send by saying "{word}": a trailing "{word}" in a dictated message or answer is that command, not a request to stop. Ignore it.',
+      voice_off: 'Voice mode is off: the voice rules given earlier in this session no longer apply. Ask your questions as usual.',
       unspoken_question: "This turn ends on a question asked only in writing or in the app's box: the user drives by voice and cannot answer it. Ask it now with the `{tool}` tool, the question alone: your reply is on screen and is read to them first. Then finish without repeating it in writing.",
       screen_only_question: 'Voice mode is on: this question only shows on screen; the user does not hear it and cannot answer it by voice. Ask it with the `{tool}` tool instead (the question alone; the text it is about goes in your written reply).',
       screen_only_session_offer: 'Voice mode is on: this offer waits for a click on screen; the user does not hear it. Ask them with the `{tool}` tool whether they want this task in a new session or here. If they pick a new session, start it (initiation "user_asked"); otherwise do it here.',
@@ -756,9 +759,26 @@ function appBoxQuestion(turn) {
   return ''
 }
 
-function endsOnWrittenQuestion(reply) {
-  const paragraphs = withoutCodeBlocks(reply).trim().split(/\n\s*\n/)
-  return paragraphs[paragraphs.length - 1].split('\n').some((line) => /\?\s*[»"*_)]*\s*$/.test(line))
+// The question a reply puts in writing, and the rest of the reply around it; null for none. It need not be the last
+// paragraph: a grill writes its options and a recommendation after it. It is in the last section: a title (a "#" line,
+// "---", or a paragraph of one bold line with text after it) ends what came before, so a question in a title or above it is not one.
+function writtenQuestion(reply) {
+  const paragraphs = (reply || '').trim().split(/\n\s*\n/)
+  const last = paragraphs.length - 1
+  let fenced = false
+  let found = -1
+  paragraphs.forEach((paragraph, i) => {
+    const lines = paragraph.trim().split('\n').filter((line) => {
+      const fence = /^\s*```/.test(line)
+      if (fence) fenced = !fenced
+      return !fence && !fenced
+    })
+    const title = (line) => /^\s*(#{1,6}\s|-{3,}\s*$)/.test(line) || (lines.length === 1 && i < last && /^\s*\*\*[^*]+\*\*\s*$/.test(line))
+    if (lines.some(title)) found = -1
+    if (lines.some((line) => !title(line) && /\?\s*[»"*_)]*\s*$/.test(line))) found = i
+  })
+  if (found < 0) return null
+  return { question: paragraphs[found].trim(), text: paragraphs.filter((_, i) => i !== found).join('\n\n') }
 }
 
 // A question only on screen is lost to someone who is not looking: the turn goes on until it is asked aloud.
@@ -767,12 +787,11 @@ function endsOnWrittenQuestion(reply) {
 // question is never sent back twice in a row, nor more than MAX_SEND_BACKS without one asked in between.
 function unspokenQuestionBlock(data, entries, reply) {
   if (!questionsCanBeSpoken() || userIsAway()) return null
-  const paragraphs = (reply || '').trim().split(/\n\s*\n/)
-  const written = endsOnWrittenQuestion(reply)
-  const question = written ? paragraphs[paragraphs.length - 1].trim() : appBoxQuestion(currentTurn(entries))
+  const written = writtenQuestion(reply)
+  const question = written ? written.question : appBoxQuestion(currentTurn(entries))
   if (!question) return null
-  // The reply stays on screen; it is read before the question asked next, without its last paragraph when that is the question.
-  const text = written ? paragraphs.slice(0, -1).join('\n\n') : paragraphs.join('\n\n')
+  // The reply stays on screen; it is read before the question asked next, without the question's paragraph when it is written.
+  const text = written ? written.text : (reply || '').trim().split(/\n\s*\n/).join('\n\n')
   // A long reply: its summary comes with the question, so the first reading already covers it all.
   const long = CONFIG.summarize_rest && speakableLines(text).length - linesThroughFirstParagraph(text) >= SUMMARY_MIN_LINES
   const sendBack = withState((state) => {
@@ -1088,10 +1107,17 @@ function textOfLastMessage(entries) {
     .join('\n')
 }
 
+// SessionStart, voice mode on. The session is noted as knowing the rules: switched off or on later, it is told at its next message.
 function printSessionRules() {
+  const data = readStdin()
+  const rules = voiceRules()
+  if (rules && data.session_id) withState((state) => (sessionNotes(state, 'voice_rules')[data.session_id] = { at: now() }))
+  return rules
+}
+
+function voiceRules() {
   if (!questionsCanBeSpoken()) return ''
-  const rules = FOR_CLAUDE.rules
-  return rules.replace(/\{word\}/g, CONFIG.validation_word).replace('{tool}', questionTool())
+  return FOR_CLAUDE.rules.replace(/\{word\}/g, CONFIG.validation_word).replace('{tool}', questionTool())
 }
 
 // The bridge service marks the hooks it runs for a cloud session.
@@ -1187,16 +1213,29 @@ function startDictating(session) {
 // A question sent back to that session and never asked (Escape, a message typed instead) holds nothing any more.
 function promptSent() {
   const data = readStdin()
-  withState((state) => {
-    if (!isHeld(state)) return
-    // The hold must still be the send-back's own: a question asked since by a session on an older version (which
-    // leaves held_by as it was) holds from a later time.
-    const sentBack = sessionNotes(state, 'sent_backs')[data.session_id]
-    const sentBackHere = state.held_by === 'send_back' && state.dictating_session === data.session_id && Boolean(sentBack) && sentBack.at === state.dictating_since
-    if (state.dictating_session && !sentBackHere) return
-    releaseHold(state)
-    startReaderUnlessRunning(state)
+  // Voice mode switched since the session last heard of it: the rules, or that they no longer apply, come with this message.
+  const rules = isVoiceModeOn() ? voiceRules() : ''
+  const told = withState((state) => {
+    const notes = sessionNotes(state, 'voice_rules')
+    const knew = Boolean(notes[data.session_id])
+    if (rules && data.session_id) notes[data.session_id] = { at: now() }
+    else delete notes[data.session_id]
+    if (!state.voice_off) endSendBackHold(state, data.session_id)
+    return rules && !knew ? rules : !rules && knew ? FOR_CLAUDE.voice_off : ''
   })
+  return told ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: told } }) : ''
+}
+
+// A message sent ends a free dictation, or a send-back's hold whose question was never asked.
+function endSendBackHold(state, session) {
+  if (!isHeld(state)) return
+  // The hold must still be the send-back's own: a question asked since by a session on an older version (which
+  // leaves held_by as it was) holds from a later time.
+  const sentBack = sessionNotes(state, 'sent_backs')[session]
+  const sentBackHere = state.held_by === 'send_back' && state.dictating_session === session && Boolean(sentBack) && sentBack.at === state.dictating_since
+  if (state.dictating_session && !sentBackHere) return
+  releaseHold(state)
+  startReaderUnlessRunning(state)
 }
 
 // "Claude Cancel": the listener pressed Escape, which cancels the dictation. A free dictation ends here, and the app it
@@ -1844,8 +1883,9 @@ const COMMANDS = {
   '--refresh-stable-copy': () => refreshStableCopy(true),
 }
 // What still runs with voice mode off: the commands that end or undo something under way (a dictation, a reading),
-// switch voice mode, or keep the plugin's own processes going. Any other command, a new one included, is silent.
-const RUNS_WHEN_OFF = ['--answered', '--done', '--cancel', '--dictating', '--quiet', '--continue', '--restart', '--on', '--off', '--toggle', '--read', '--learn-prompt-path', '--go-back', '--dictate-behind', '--refresh-stable-copy']
+// switch voice mode, tell a session it was switched, or keep the plugin's own processes going. Any other command, a new
+// one included, is silent.
+const RUNS_WHEN_OFF = ['--answered', '--prompt-sent', '--done', '--cancel', '--dictating', '--quiet', '--continue', '--restart', '--on', '--off', '--toggle', '--read', '--learn-prompt-path', '--go-back', '--dictate-behind', '--refresh-stable-copy']
 
 function run(argv) {
   const command = argv[0] || ''

@@ -156,7 +156,7 @@ Say a command on its own, a short pause before and after; a command inside a sen
 - **Claude waiting**: when a session shows a permission prompt or waits for you without asking aloud, "Claude needs your answer" is read, with the session's name (not while you are already answering by voice). A turn that ends with nothing to read says "Claude is waiting".
 - **Away from the Mac** (keyboard and mouse idle for `away_after_idle_seconds`): questions are asked in writing instead.
 - **Permission prompts by voice** (opt-in, `voice_permissions`): the request is read, a clear "yes" allows, a clear "no" denies, anything else leaves the dialog on screen. Like a question, it waits for a dictation under way (up to 40 s, then the dialog shows). Your deny rules still win. Keep it off if a misheard "yes" is a risk.
-- **Claude Voice mode off**, `/handfree-code:vocal off` in Claude, or the app's Voice button: turns everything off, listening included (the microphone is let go). `/handfree-code:vocal on` or the button turns it back on; by voice it cannot, since nothing listens any more.
+- **Claude Voice mode off**, `/handfree-code:vocal off` in Claude, or the app's Voice button: turns everything off, listening included (the microphone is let go). `/handfree-code:vocal on` or the button turns it back on; by voice it cannot, since nothing listens any more. A session already open learns of the switch with your next message to it.
 
 ## Updating
 
