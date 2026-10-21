@@ -736,6 +736,35 @@ if command -v swift >/dev/null 2>&1; then
   check "app: a phantom after Stop leaves the Stop last" "$(printf '%s' "$phantoms" | sed -n 3p)" '^\[La suite. Stop.\]$'
   check "app: English and German phantoms go too" "$(printf '%s' "$phantoms" | sed -n 4,5p | tr -d '\n')" '^\[\]\[\]$'
   check "app: real words about subtitles stay" "$(printf '%s' "$phantoms" | sed -n 6p)" '^\[Les sous-titres du film sont bons.\]$'
+  # The double tap of a modifier, run alone with times given: tight, so that a brushed key starts nothing.
+  { echo 'import AppKit'; echo 'enum ModifierTaps { static let flags: [UInt16: NSEvent.ModifierFlags] = [54: .command, 55: .command] }'
+    sed -n '/^struct TapDetector {/,/^}/p' "$ROOT/app/Sources/VoiceCommands.swift"
+    cat <<'SWIFT'
+// Each line: taps as "press-length gap press-length…" in seconds, then what the detector says.
+func taps(_ times: [Double], key: UInt16 = 54, other: Bool = false) -> String {
+  var detector = TapDetector()
+  var now = Date(timeIntervalSince1970: 0)
+  var result: UInt16?
+  for (index, length) in times.enumerated() where index % 2 == 0 {
+    if index > 0 { now += times[index - 1] }
+    _ = detector.feed(code: key, flags: .command, at: now)
+    if other && index > 0 { _ = detector.feed(code: nil, flags: [], at: now) }
+    now += length
+    result = detector.feed(code: key, flags: [], at: now) ?? result
+  }
+  return result.map { "tap \($0)" } ?? "none"
+}
+print(taps([0.1, 0.15, 0.1]))
+print(taps([0.1, 0.5, 0.1]))
+print(taps([0.35, 0.1, 0.1]))
+print(taps([0.1, 0.1, 0.1], other: true))
+SWIFT
+  } > "$WORK/taps.swift"
+  taps=$(swift "$WORK/taps.swift" 2>&1)
+  check "app: two quick taps of a modifier alone make a double tap" "$(printf '%s' "$taps" | sed -n 1p)" '^tap 54$'
+  check "app: not with a pause between them" "$(printf '%s' "$taps" | sed -n 2p)" '^none$'
+  check "app: nor with a key held" "$(printf '%s' "$taps" | sed -n 3p)" '^none$'
+  check "app: nor with another key between them" "$(printf '%s' "$taps" | sed -n 4p)" '^none$'
 fi
 
 # The install keeps the way Claude's questions travel: run with a scratch home and a fake `claude` that notes its calls.

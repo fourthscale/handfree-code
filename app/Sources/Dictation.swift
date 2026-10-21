@@ -25,6 +25,14 @@ final class DictationController {
     return phase == .starting || phase == .recording || phase == .finishing
   }
 
+  // Ends the dictation under way as Return in its pill does (its text sent). False when none is under way.
+  @discardableResult
+  func finishCurrent() -> Bool {
+    guard isBusy, let onReturn = panel?.onReturn else { return false }
+    onReturn()
+    return true
+  }
+
   // A question, or a dictation Claude stays behind for: the pill comes forward (the keys "stop" and "cancel" press
   // reach it), the answer goes back, and so does the app that was in front.
   func ask(_ question: String) async -> String? {

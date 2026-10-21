@@ -194,24 +194,48 @@ final class HotKeys {
 
   static func run(_ command: VoiceCommand) {
     Chime.play(commandSound()) // the same sound as a spoken command
+    // The shortcut that starts a dictation, pressed again while one is under way, ends it as "Stop" does: run again, it
+    // would bring Claude forward over the pill, whose Return and Escape would then go to Claude.
+    if startsDictation.contains(command.id), DictationController.shared.finishCurrent() {
+      tellPlugin("--done")
+      return
+    }
     tellPlugin(command.argument)
   }
+
+  private static let startsDictation: Set<String> = ["listen", "reply", "session"]
 }
 
-// A modifier key pressed and let go twice, quickly and alone (right ⌘ twice, say).
+// A modifier key pressed and let go twice, quickly and alone (right ⌘ twice, say). Tight on purpose: a hand brushing
+// the keyboard (a cough, a ⌘ held a little) must not start a dictation.
 struct TapDetector {
+  static let maxPressSeconds = 0.2 // each press, from down to up
+  static let maxGapSeconds = 0.3 // from the first tap's release to the second tap's press
   private var down: (code: UInt16, at: Date)?
-  private var last: (code: UInt16, at: Date)?
+  private var released: (code: UInt16, at: Date)?
 
   // The key, when this event completes a double tap.
   mutating func feed(_ event: NSEvent) -> UInt16? {
-    guard event.type == .flagsChanged, let flag = ModifierTaps.flags[event.keyCode] else { down = nil; last = nil; return nil }
-    let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
-    if flags == flag { down = (event.keyCode, Date()); return nil } // pressed, alone
+    guard event.type == .flagsChanged else { return feed(code: nil, flags: [], at: Date()) }
+    return feed(code: event.keyCode, flags: event.modifierFlags.intersection([.command, .option, .control, .shift]), at: Date())
+  }
+
+  // The same, from what the event says: the modifier key (nil: any other key or event), the modifiers held after it.
+  mutating func feed(code: UInt16?, flags: NSEvent.ModifierFlags, at now: Date) -> UInt16? {
+    guard let code, let flag = ModifierTaps.flags[code] else { down = nil; released = nil; return nil }
+    if flags == flag { // pressed, alone
+      // A second press comes soon after the first release, or it starts over as a first one.
+      if let first = released, first.code != code || now.timeIntervalSince(first.at) > TapDetector.maxGapSeconds { released = nil }
+      down = (code, now)
+      return nil
+    }
     defer { down = nil }
-    guard flags.isEmpty, let pressed = down, pressed.code == event.keyCode, Date().timeIntervalSince(pressed.at) < 0.3 else { last = nil; return nil }
-    if let previous = last, previous.code == event.keyCode, Date().timeIntervalSince(previous.at) < 0.4 { last = nil; return event.keyCode }
-    last = (event.keyCode, Date())
+    guard flags.isEmpty, let pressed = down, pressed.code == code, now.timeIntervalSince(pressed.at) < TapDetector.maxPressSeconds else {
+      released = nil
+      return nil
+    }
+    if released?.code == code { released = nil; return code }
+    released = (code, now)
     return nil
   }
 }
