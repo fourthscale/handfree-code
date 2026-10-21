@@ -13,7 +13,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "mcp__.*spokenly.*__ask_user_dictation",
+        "matcher": "mcp__.*__ask_user_dictation",
         "hooks": [
           {
             "type": "command",
@@ -35,7 +35,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__.*spokenly.*__ask_user_dictation",
+        "matcher": "mcp__.*__ask_user_dictation",
         "hooks": [
           {
             "type": "command",
@@ -47,7 +47,7 @@
     ],
     "PostToolUseFailure": [
       {
-        "matcher": "mcp__.*spokenly.*__ask_user_dictation",
+        "matcher": "mcp__.*__ask_user_dictation",
         "hooks": [
           {
             "type": "command",

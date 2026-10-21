@@ -1,0 +1,3 @@
+"NSMicrophoneUsageDescription" = "Handfree Code hört dein Diktat, um es auf diesem Mac zu transkribieren.";
+"NSSpeechRecognitionUsageDescription" = "Handfree Code transkribiert dein Diktat mit Apples Spracherkennung, auf diesem Mac.";
+"NSAppleEventsUsageDescription" = "Handfree Code führt die Befehle des Plugins für seine Tastenkürzel aus: Sie finden das Nachrichtenfeld von Claude und die App im Vordergrund über System Events.";

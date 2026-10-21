@@ -10,7 +10,11 @@ import urllib.request
 TRANSCRIPT_TAIL_LINES = 400
 # One line per hook, for troubleshooting a cloud session: event, outcome, never a key or the conversation.
 LOG_PATH = os.environ.get("HANDFREE_HOOK_LOG", "/tmp/handfree-hook.log")
-TIMEOUT_SECONDS = 110  # under the PreToolUse hook's 120 s
+# Each a little under its hook's own timeout (hooks/hooks.json, checked by tests/bridge.sh): 300 s for --answered,
+# which reads "the rest", 120 s for the question, 30 and 10 s for the guard and a message sent. The bridge's are a little
+# less again (bridge-server.py).
+TIMEOUT_SECONDS = {"--answered": 295, "--guard-question": 25, "--prompt-sent": 8}
+DEFAULT_TIMEOUT_SECONDS = 110
 
 
 def transcript_tail(path):
@@ -82,7 +86,7 @@ def main():
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS.get(command, DEFAULT_TIMEOUT_SECONDS)) as response:
             output = response.read().decode("utf-8")
             sys.stdout.write(output)
             log(command, f"HTTP {response.status}, {len(output)} bytes back")

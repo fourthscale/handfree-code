@@ -1,0 +1,118 @@
+{
+  "_about": "The spoken commands: what each one runs (an argument of handfree.js) and its default phrases per language, lowercase. Read by the listener and by the app's Voice commands settings. \"voice_on\" has no phrase: voice mode off stops the listener, so nothing would hear it (a shortcut turns it on). \"old_names\": the names of the Voice Control setup (before 0.2), still read in `voice_commands`.",
+  "commands": {
+    "listen": "--listen",
+    "reply": "--reply",
+    "session": "--search-session",
+    "stop": "--done",
+    "cancel": "--cancel",
+    "quiet": "--quiet",
+    "continue": "--continue",
+    "restart": "--restart",
+    "voice_on": "--on",
+    "voice_off": "--off"
+  },
+  "phrases": {
+    "fr": {
+      "listen": [
+        "claude écoute"
+      ],
+      "reply": [
+        "claude réponse"
+      ],
+      "session": [
+        "claude session"
+      ],
+      "stop": [
+        "stop"
+      ],
+      "cancel": [
+        "claude annule"
+      ],
+      "quiet": [
+        "claude chut",
+        "claude silence",
+        "claude tais-toi"
+      ],
+      "continue": [
+        "claude continue"
+      ],
+      "restart": [
+        "claude recommence"
+      ],
+      "voice_off": [
+        "claude mode vocal désactivé"
+      ]
+    },
+    "en": {
+      "listen": [
+        "claude listen"
+      ],
+      "reply": [
+        "claude reply"
+      ],
+      "session": [
+        "claude session"
+      ],
+      "stop": [
+        "stop"
+      ],
+      "cancel": [
+        "claude cancel"
+      ],
+      "quiet": [
+        "claude quiet"
+      ],
+      "continue": [
+        "claude continue"
+      ],
+      "restart": [
+        "claude restart"
+      ],
+      "voice_off": [
+        "claude voice mode off"
+      ]
+    },
+    "de": {
+      "listen": [
+        "claude zuhören"
+      ],
+      "reply": [
+        "claude antworten"
+      ],
+      "session": [
+        "claude sitzung"
+      ],
+      "stop": [
+        "stopp"
+      ],
+      "cancel": [
+        "claude abbrechen"
+      ],
+      "quiet": [
+        "claude ruhe"
+      ],
+      "continue": [
+        "claude weiter"
+      ],
+      "restart": [
+        "claude neu"
+      ],
+      "voice_off": [
+        "claude sprachmodus aus"
+      ]
+    }
+  },
+  "old_names": {
+    "Claude Listen": "listen",
+    "Claude Reply": "reply",
+    "Claude Session": "session",
+    "Stop": "stop",
+    "Claude Cancel": "cancel",
+    "Claude Quiet": "quiet",
+    "Claude Continue": "continue",
+    "Claude Restart": "restart",
+    "Claude Voice mode on": "voice_on",
+    "Claude Voice mode off": "voice_off"
+  }
+}
