@@ -259,6 +259,37 @@ hf --on >/dev/null
 check "a session given the rules at its start is not given them again" "[$(printf '{"session_id":"w"}' | hf --session-rules >/dev/null; sent w)]" "^\[\]$"
 reset
 
+# Voice mode for some sessions only: the first one turned on locks it, others join, the last one off turns it all off.
+rules_of() { printf '{"session_id":"%s"}' "$1" | hf --session-rules; }
+printf '{"session_id":"b"}' | hf --session-rules >/dev/null
+hf --session-on a >/dev/null; wait_quiet 1
+check "a session turned on is said" "$(said)" "This session is in voice mode."
+reset; reply b 'Not for me.'; reply a 'For me.'; wait_quiet 1.5
+check "locked on a session, its reply is read" "$(said)" "For me"
+check_not "another session's is not" "$(said)" "Not for me"
+check "a session left out gets no rules" "[$(rules_of c)]" "^\[\]$"
+check "one that had them is told they no longer apply" "$(sent b)" "Voice mode is off for this session"
+hf --session-on b >/dev/null; reset; reply b 'Joined.'; wait_quiet 1.5
+check "a second session turned on joins the first" "$(said)" "Joined"
+hf --session-off a >/dev/null; wait_quiet 1
+check "a session turned off is said" "$(said)" "This session is muted."
+reset; reply a 'Gone quiet.'; wait_quiet 1.5
+check_not "and is not read any more" "$(said)" "Gone quiet"
+hf --session-off b >/dev/null; wait_quiet 1
+check "the last one turned off turns voice mode off" "$(said)" "Voice mode off."
+hf --on >/dev/null; hf --session-off a >/dev/null; reset; reply a 'Muted alone.'; reply b 'Still talking.'; wait_quiet 1.5
+check "voice mode on for all, a session muted is not read" "$(said)" "Still talking"
+check_not "while the others are" "$(said)" "Muted alone"
+hf --on >/dev/null; reset; reply a 'Back for all.'; wait_quiet 1.5
+check "voice mode on again is for every session" "$(said)" "Back for all"
+mkdir -p "$WORK/screen/x"; printf '{"sessionId":"local_s","cliSessionId":"b","lastFocusedAt":5}' > "$WORK/screen/x/local_s.json"
+reset; HANDFREE_APP_SESSIONS_DIR="$WORK/screen" hf --session-on >/dev/null; reply a 'Not on screen.'; reply b 'On screen.'; wait_quiet 1.5
+check "said with no session given, the one on screen is turned on" "$(said)" "On screen"
+check_not "and only it" "$(said)" "Not on screen"
+reset; HANDFREE_APP_SESSIONS_DIR="$WORK/nothing" hf --session-on >/dev/null; wait_quiet 1
+check "no session on screen is said" "$(said)" "No session on screen."
+hf --on >/dev/null; reset
+
 echo "<plist/>" > "$WORK/agents/com.handfree-code.bridge.plist"; rm -f "$WORK/support/bridge-server.py" "$WORK/restarted.log"
 hf --session-rules </dev/null >/dev/null
 check "a new bridge-server.py in the stable copy restarts the bridge" "$(cat "$WORK/restarted.log" 2>/dev/null)" "com.handfree-code.bridge"

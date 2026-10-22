@@ -22,6 +22,8 @@
 //   --cancel          "Claude Cancel": Escape was pressed in the dictation window; a free dictation ends, nothing is sent
 //   --quiet / --continue / --restart   "Claude Quiet" / "Claude Continue" / "Claude Restart"
 //   --on / --off      "Claude Voice mode on" / "Claude Voice mode off" (--toggle: /vocal with no argument)
+//   --session-on / --session-off [id]  "Claude Voice this session" / "Claude Mute this session", or /vocal here / mute:
+//                     voice mode for the session on screen (or that id) only, or not for it
 // Internal: --read (the reader process), --learn-prompt-path (background search of the message field),
 //   --go-back <bundle> <since> (brings the app "Listen" was said in back, once the dictated message is sent),
 //   --dictate-behind <session> (records in the app's pill and sends the text to Claude left behind),
@@ -97,7 +99,7 @@ const DEFAULTS = {
 //   words   what answers and the app's buttons are recognised by: every language's, whatever the language set
 const TEXTS = {
   fr: {
-    spoken: { session: 'Session {title}.', question: 'Une question.', link: 'lien', code: 'Bloc de code omis.', more: 'Détail disponible.', detail: 'Pour tout entendre, réponds « le détail ».', dictate: 'Ton message pour Claude.', cloud: 'cloud', not_sent: 'Message pas envoyé : il attend dans Claude.', voice_on: 'Mode vocal activé.', voice_off: 'Mode vocal désactivé.', permission: 'Autorisation demandée : {action}. Autoriser ?', idle: "Claude t'attend", waiting: 'Claude attend ta réponse' },
+    spoken: { session: 'Session {title}.', question: 'Une question.', link: 'lien', code: 'Bloc de code omis.', more: 'Détail disponible.', detail: 'Pour tout entendre, réponds « le détail ».', dictate: 'Ton message pour Claude.', cloud: 'cloud', not_sent: 'Message pas envoyé : il attend dans Claude.', voice_on: 'Mode vocal activé.', voice_off: 'Mode vocal désactivé.', session_on: 'Cette session passe en mode vocal.', session_off: 'Cette session ne parle plus.', no_session: "Aucune session à l'écran.", permission: 'Autorisation demandée : {action}. Autoriser ?', idle: "Claude t'attend", waiting: 'Claude attend ta réponse' },
     claude: {
       rules:
         'Mode vocal actif.\n' +
@@ -108,7 +110,7 @@ const TEXTS = {
         "- Quand ta réponse est longue (plus de deux ou trois paragraphes), commence-la par un paragraphe de deux ou trois phrases qui la résume en entier : " +
         "c'est lui qui m'est lu, puis « détail disponible » ; le reste seulement si je le demande.\n" +
         "- Je dicte et je valide en disant « {word} » : un « {word} » en fin de message ou de réponse dictée est cette commande, pas une demande d'arrêter. Ignore-le.",
-      voice_off: "Mode vocal désactivé : les règles vocales données plus tôt dans cette session ne s'appliquent plus. Pose tes questions comme d'habitude.",
+      voice_off: "Mode vocal désactivé pour cette session : les règles vocales données plus tôt ne s'appliquent plus. Pose tes questions comme d'habitude.",
       unspoken_question: "Ce tour se termine sur une question posée seulement à l'écrit ou dans la boîte de l'app : l'utilisateur pilote à la voix et ne peut pas y répondre. Pose-la maintenant avec l'outil `{tool}`, la question seule : ta réponse est affichée et lui est lue avant. Puis termine sans la répéter à l'écrit.",
       screen_only_question: "Mode vocal actif : cette question s'affiche seulement à l'écran, l'utilisateur ne l'entend pas et ne peut pas y répondre à la voix. Pose-la avec l'outil `{tool}` à la place (la question seule ; le texte qu'elle concerne va dans ta réponse écrite).",
       screen_only_session_offer: "Mode vocal actif : cette proposition attend un clic à l'écran, l'utilisateur ne l'entend pas. Demande-lui avec l'outil `{tool}` s'il veut cette tâche dans une nouvelle session ou ici. S'il choisit une nouvelle session, lance-la (initiation \"user_asked\") ; sinon fais-la ici.",
@@ -119,7 +121,7 @@ const TEXTS = {
     words: { yes: ['oui', 'ouais', 'autorise', 'autoriser', 'vas-y', 'valide', "d'accord"], no: ['non', 'refuse', 'refuser'], more: ['la suite', 'suite', 'continue', 'lis la suite'], detail: ['le détail', 'détail', 'les détails', 'détails', 'montre le détail', 'lis le détail', 'tout'], send_button: ['envoyer'] },
   },
   en: {
-    spoken: { session: 'Session {title}.', question: 'A question.', link: 'link', code: 'Code block skipped.', more: 'Details available.', detail: 'To hear it all, answer "the details".', dictate: 'Your message for Claude.', cloud: 'cloud', not_sent: 'Message not sent: it is waiting in Claude.', voice_on: 'Voice mode on.', voice_off: 'Voice mode off.', permission: 'Permission requested: {action}. Allow?', idle: 'Claude is waiting', waiting: 'Claude needs your answer' },
+    spoken: { session: 'Session {title}.', question: 'A question.', link: 'link', code: 'Code block skipped.', more: 'Details available.', detail: 'To hear it all, answer "the details".', dictate: 'Your message for Claude.', cloud: 'cloud', not_sent: 'Message not sent: it is waiting in Claude.', voice_on: 'Voice mode on.', voice_off: 'Voice mode off.', session_on: 'This session is in voice mode.', session_off: 'This session is muted.', no_session: 'No session on screen.', permission: 'Permission requested: {action}. Allow?', idle: 'Claude is waiting', waiting: 'Claude needs your answer' },
     claude: {
       rules:
         'Voice mode is on.\n' +
@@ -130,7 +132,7 @@ const TEXTS = {
         '- When your reply is long (more than two or three paragraphs), open it with a paragraph of two or three sentences summing it all up: ' +
         'that is what is read to me, then "details available"; the rest only if I ask for it.\n' +
         '- I dictate and send by saying "{word}": a trailing "{word}" in a dictated message or answer is that command, not a request to stop. Ignore it.',
-      voice_off: 'Voice mode is off: the voice rules given earlier in this session no longer apply. Ask your questions as usual.',
+      voice_off: 'Voice mode is off for this session: the voice rules given earlier no longer apply. Ask your questions as usual.',
       unspoken_question: "This turn ends on a question asked only in writing or in the app's box: the user drives by voice and cannot answer it. Ask it now with the `{tool}` tool, the question alone: your reply is on screen and is read to them first. Then finish without repeating it in writing.",
       screen_only_question: 'Voice mode is on: this question only shows on screen; the user does not hear it and cannot answer it by voice. Ask it with the `{tool}` tool instead (the question alone; the text it is about goes in your written reply).',
       screen_only_session_offer: 'Voice mode is on: this offer waits for a click on screen; the user does not hear it. Ask them with the `{tool}` tool whether they want this task in a new session or here. If they pick a new session, start it (initiation "user_asked"); otherwise do it here.',
@@ -141,7 +143,7 @@ const TEXTS = {
     words: { yes: ['yes', 'allow', 'approve', 'go ahead'], no: ['no', 'deny'], more: ['the rest', 'more', 'go on'], detail: ['the details', 'details', 'the detail', 'detail', 'all of it'], send_button: ['send'] },
   },
   de: {
-    spoken: { session: 'Sitzung {title}.', question: 'Eine Frage.', link: 'Link', code: 'Codeblock ausgelassen.', more: 'Details verfügbar.', detail: 'Um alles zu hören, antworte „die Details“.', dictate: 'Deine Nachricht an Claude.', cloud: 'Cloud', not_sent: 'Nachricht nicht gesendet: sie wartet in Claude.', voice_on: 'Sprachmodus an.', voice_off: 'Sprachmodus aus.', permission: 'Erlaubnis angefragt: {action}. Erlauben?', idle: 'Claude wartet', waiting: 'Claude wartet auf deine Antwort' },
+    spoken: { session: 'Sitzung {title}.', question: 'Eine Frage.', link: 'Link', code: 'Codeblock ausgelassen.', more: 'Details verfügbar.', detail: 'Um alles zu hören, antworte „die Details“.', dictate: 'Deine Nachricht an Claude.', cloud: 'Cloud', not_sent: 'Nachricht nicht gesendet: sie wartet in Claude.', voice_on: 'Sprachmodus an.', voice_off: 'Sprachmodus aus.', session_on: 'Diese Sitzung ist im Sprachmodus.', session_off: 'Diese Sitzung ist stumm.', no_session: 'Keine Sitzung auf dem Bildschirm.', permission: 'Erlaubnis angefragt: {action}. Erlauben?', idle: 'Claude wartet', waiting: 'Claude wartet auf deine Antwort' },
     words: { yes: ['ja', 'erlauben'], no: ['nein', 'ablehnen'], more: ['weiter', 'mehr', 'der rest'], detail: ['die details', 'details zeigen', 'alles'], send_button: ['senden', 'absenden'] },
   },
 }
@@ -241,7 +243,14 @@ function now() {
   return Date.now() / 1000
 }
 
+// Read once: run() looks at the hook's session before the command reads the rest.
+let STDIN = null
 function readStdin() {
+  if (!STDIN) STDIN = parseStdin()
+  return STDIN
+}
+
+function parseStdin() {
   const data = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile
   const text = ObjC.unwrap($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding))
   try {
@@ -1214,7 +1223,7 @@ function startDictating(session) {
 function promptSent() {
   const data = readStdin()
   // Voice mode switched since the session last heard of it: the rules, or that they no longer apply, come with this message.
-  const rules = isVoiceModeOn() ? voiceRules() : ''
+  const rules = isVoiceModeOn(data.session_id) ? voiceRules() : ''
   const told = withState((state) => {
     const notes = sessionNotes(state, 'voice_rules')
     const knew = Boolean(notes[data.session_id])
@@ -1453,6 +1462,8 @@ function takeBackCut(state) {
 function switchVoiceMode(on) {
   const resumeMedia = withState((state) => {
     state.voice_off = !on
+    delete state.voice_restricted
+    delete state.voice_sessions
     if (on) return false
     killReader(state)
     releaseHold(state)
@@ -1473,8 +1484,42 @@ function switchListener(on) {
   shell(on ? `launchctl bootstrap ${domain} ${quote(plist)} >/dev/null 2>&1; true` : `launchctl bootout ${domain}/${LISTENER_LABEL} >/dev/null 2>&1; true`)
 }
 
-function isVoiceModeOn() {
-  return withState((state) => !state.voice_off)
+// Without a session (a spoken command, a shortcut): whether voice mode is on at all.
+function isVoiceModeOn(session) {
+  return withState((state) => sessionVoiced(state, session))
+}
+
+// ---------- voice mode for some sessions only
+// `voice_sessions`: a session id to true (voiced) or false (muted). `voice_restricted`: only the sessions listed true
+// speak; otherwise every session but those listed false. Both missing: every session, as before.
+function sessionVoiced(state, session) {
+  if (state.voice_off) return false
+  if (!session) return true
+  const listed = (state.voice_sessions || {})[session]
+  return listed === undefined ? !state.voice_restricted : listed
+}
+
+// "/handfree-code:vocal here" (its session's id) or the spoken command and shortcut (the session on screen). The first
+// session turned on locks voice mode on it; the next ones join it. Turning off the last one turns voice mode off.
+function switchSessionVoice(on, [given]) {
+  const session = given && given !== '-' ? given : cliSessionOnScreen()
+  if (!session) return say(PHRASE.no_session)
+  const { wasOff, lastOne } = withState((state) => {
+    const wasOff = Boolean(state.voice_off)
+    if (on && (wasOff || !state.voice_restricted)) Object.assign(state, { voice_restricted: true, voice_sessions: {} })
+    const sessions = state.voice_sessions || {}
+    if (on) sessions[session] = true
+    else if (state.voice_restricted) delete sessions[session]
+    else sessions[session] = false
+    state.voice_sessions = sessions
+    if (on) state.voice_off = false
+    // What it had waiting is not read any more; a reading under way goes on, "Quiet" cuts it.
+    else state.queue = state.queue.filter((item) => item.session !== session)
+    return { wasOff, lastOne: !on && state.voice_restricted && !Object.values(sessions).some(Boolean) }
+  })
+  if (lastOne) return switchVoiceMode(false)
+  say(on ? PHRASE.session_on : PHRASE.session_off)
+  if (on && wasOff) switchListener(true)
 }
 
 // ---------- "Listen": focus the message field and start the dictation
@@ -1562,15 +1607,24 @@ function dictateIntoFront() {
 // The app's links name a session by its own id (local_…); hooks know the Claude Code one, which the app's file records.
 // The app records when each session was last shown (`lastFocusedAt`): the latest is the one in its window.
 function appSessionOnScreen() {
-  let latest = { at: 0, id: null }
+  return sessionOnScreen().id
+}
+
+// The id hooks know it by (the transcript's), for the session on screen.
+function cliSessionOnScreen() {
+  return sessionOnScreen().cli
+}
+
+function sessionOnScreen() {
+  let latest = { at: 0, id: null, cli: null }
   for (const file of shell(`find ${quote(APP_SESSIONS_DIR)} -name 'local_*.json' 2>/dev/null`).split(/\r\n?|\n/).filter(Boolean)) {
     try {
       const session = JSON.parse(readFile(file))
       const at = Number(session.lastFocusedAt) || 0
-      if (at > latest.at) latest = { at, id: session.sessionId }
+      if (at > latest.at) latest = { at, id: session.sessionId, cli: session.cliSessionId || null }
     } catch (e) {}
   }
-  return latest.id
+  return latest
 }
 
 function appSessionId(sessionId) {
@@ -1875,6 +1929,8 @@ const COMMANDS = {
   '--on': () => switchVoiceMode(true),
   '--off': () => switchVoiceMode(false),
   '--toggle': () => switchVoiceMode(!isVoiceModeOn()),
+  '--session-on': (args) => switchSessionVoice(true, args),
+  '--session-off': (args) => switchSessionVoice(false, args),
   '--read': readQueue,
   '--learn-prompt-path': learnPromptPath,
   '--go-back': goBackOnceSent,
@@ -1882,18 +1938,22 @@ const COMMANDS = {
   '--dictate-behind': dictateBehind,
   '--refresh-stable-copy': () => refreshStableCopy(true),
 }
+// The commands Claude Code's hooks run, with the hook's data on stdin.
+const HOOK_COMMANDS = ['', '--question', '--notify', '--permission', '--session-rules', '--guard-question', '--prompt-sent', '--answered']
 // What still runs with voice mode off: the commands that end or undo something under way (a dictation, a reading),
 // switch voice mode, tell a session it was switched, or keep the plugin's own processes going. Any other command, a new
 // one included, is silent.
-const RUNS_WHEN_OFF = ['--answered', '--prompt-sent', '--done', '--cancel', '--dictating', '--quiet', '--continue', '--restart', '--on', '--off', '--toggle', '--read', '--learn-prompt-path', '--go-back', '--dictate-behind', '--refresh-stable-copy']
+const RUNS_WHEN_OFF = ['--answered', '--prompt-sent', '--done', '--cancel', '--dictating', '--quiet', '--continue', '--restart', '--on', '--off', '--toggle', '--session-on', '--read', '--learn-prompt-path', '--go-back', '--dictate-behind', '--refresh-stable-copy']
 
 function run(argv) {
   const command = argv[0] || ''
   if (!(command in COMMANDS)) return `unknown command: ${command}`
   // Before the voice-off check: the listener and the bridge get their new version even while voice mode is off.
   if (command === '--session-rules') refreshStableCopy()
-  if (!RUNS_WHEN_OFF.includes(command) && !isVoiceModeOn()) return ''
-  // Only "--go-back" and "--dictate-behind" take arguments: the others must not see them as their own parameters.
-  const output = ['--go-back', '--dictate-behind'].includes(command) ? COMMANDS[command](argv.slice(1)) : COMMANDS[command]()
+  // A hook speaks for its session: voice mode may be on for some sessions only.
+  const session = HOOK_COMMANDS.includes(command) ? readStdin().session_id : null
+  if (!RUNS_WHEN_OFF.includes(command) && !isVoiceModeOn(session)) return ''
+  // Only these take arguments: the others must not see them as their own parameters.
+  const output = ['--go-back', '--dictate-behind', '--session-on', '--session-off'].includes(command) ? COMMANDS[command](argv.slice(1)) : COMMANDS[command]()
   return typeof output === 'string' ? output : ''
 }

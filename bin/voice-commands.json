@@ -10,7 +10,9 @@
     "continue": "--continue",
     "restart": "--restart",
     "voice_on": "--on",
-    "voice_off": "--off"
+    "voice_off": "--off",
+    "session_on": "--session-on",
+    "session_off": "--session-off"
   },
   "phrases": {
     "fr": {
@@ -42,6 +44,12 @@
       ],
       "voice_off": [
         "claude mode vocal désactivé"
+      ],
+      "session_on": [
+        "claude active mode vocal session"
+      ],
+      "session_off": [
+        "claude désactive mode vocal session"
       ]
     },
     "en": {
@@ -71,6 +79,12 @@
       ],
       "voice_off": [
         "claude voice mode off"
+      ],
+      "session_on": [
+        "claude voice this session"
+      ],
+      "session_off": [
+        "claude mute this session"
       ]
     },
     "de": {
@@ -100,6 +114,12 @@
       ],
       "voice_off": [
         "claude sprachmodus aus"
+      ],
+      "session_on": [
+        "claude sprachmodus sitzung an"
+      ],
+      "session_off": [
+        "claude sprachmodus sitzung aus"
       ]
     }
   },

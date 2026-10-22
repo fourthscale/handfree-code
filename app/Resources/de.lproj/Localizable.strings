@@ -147,6 +147,10 @@
 "Read the rest of the reply" = "Den Rest der Antwort vorlesen";
 "Read the reply again from the start" = "Die Antwort von vorn vorlesen";
 "Turn everything off, listening included" = "Alles ausschalten, auch das Zuhören";
+"command.session_on" = "Sprachmodus für diese Sitzung";
+"command.session_off" = "Diese Sitzung stumm";
+"Voice mode for the session on screen only" = "Sprachmodus nur für die Sitzung auf dem Bildschirm";
+"No voice for the session on screen" = "Keine Stimme für die Sitzung auf dem Bildschirm";
 "Remove the shortcut" = "Kürzel entfernen";
 "Its key while you dictate" = "Seine Taste beim Diktieren";
 "Spoken phrases and keyboard shortcuts" = "Gesprochene Sätze und Tastenkürzel";

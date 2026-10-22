@@ -4,7 +4,7 @@ Drive Claude Code by voice on macOS, hands free.
 
 - **Claude talks**: replies and questions are read aloud, with the name of the session speaking. Only the first paragraph is read; say "Claude Continue" for the rest.
 - **You talk**: you dictate in the Handfree Code app's window and send by saying "stop". Claude asks its questions there too and you answer aloud. The transcription runs on your Mac (Whisper, or Apple's recognizer).
-- **You steer it** with a few spoken commands, or keyboard shortcuts: "Claude Listen", "Claude Reply", "Claude Session", "Stop", "Claude Cancel", "Claude Quiet", "Claude Continue", "Claude Restart", "Claude Voice mode off" (voice mode on: its shortcut, as nothing listens while it is off).
+- **You steer it** with a few spoken commands, or keyboard shortcuts: "Claude Listen", "Claude Reply", "Claude Session", "Stop", "Claude Cancel", "Claude Quiet", "Claude Continue", "Claude Restart", "Claude Voice mode off", "Claude Voice this session", "Claude Mute this session" (voice mode on: its shortcut, as nothing listens while it is off).
 
 Everything is open source and built on your Mac: the plugin (hooks and scripts), the **Handfree Code app** (a native macOS app: dictation, questions, a status panel with a halo, settings), and a **listener** for the spoken commands (Vosk, offline). One command installs it all.
 
@@ -128,6 +128,8 @@ The app answers on `localhost:51290`, for the plugin, the cloud bridge and the `
 | claude continue | claude continue | claude weiter | reads the rest of the reply |
 | claude restart | claude recommence | claude neu | reads the reply again from the start |
 | claude voice mode off | claude mode vocal désactivé | claude sprachmodus aus | turns everything off, listening included |
+| claude voice this session | claude active mode vocal session | claude sprachmodus sitzung an | voice mode for the session on screen only (see *Usage*) |
+| claude mute this session | claude désactive mode vocal session | claude sprachmodus sitzung aus | no voice for the session on screen |
 
 Say a command on its own, a short pause before and after; a command inside a sentence does nothing. A second, free transcription of the same audio checks each command: one it heard as other words (a video, a sentence of yours) is refused. "Stop" sends once a second of silence follows it, so a "stop" inside your sentence does not cut you short. What is listened for follows what happens: while you dictate, only "Stop" and "Cancel"; while Claude speaks, only "Quiet", "Continue" and "Restart". **The phrases are yours to choose**, several per command if you like: in the app (Settings > Voice commands; the listener restarts by itself to take them), or in `~/.config/handfree-code.json` (then restart the listener with the `launchctl kickstart` above: it does not restart with each session, only when its own files change):
 
@@ -157,6 +159,7 @@ Say a command on its own, a short pause before and after; a command inside a sen
 - **Away from the Mac** (keyboard and mouse idle for `away_after_idle_seconds`): questions are asked in writing instead.
 - **Permission prompts by voice** (opt-in, `voice_permissions`): the request is read, a clear "yes" allows, a clear "no" denies, anything else leaves the dialog on screen. Like a question, it waits for a dictation under way (up to 40 s, then the dialog shows). Your deny rules still win. Keep it off if a misheard "yes" is a risk.
 - **Claude Voice mode off**, `/handfree-code:vocal off` in Claude, or the app's Voice button: turns everything off, listening included (the microphone is let go). `/handfree-code:vocal on` or the button turns it back on; by voice it cannot, since nothing listens any more. A session already open learns of the switch with your next message to it.
+- **Some sessions only**: `/handfree-code:vocal here` in a session, "Claude Voice this session" or its shortcut (the session on screen) locks voice mode on that session: the others are neither read nor ask by voice. Do the same in a second or third session to add it. `/handfree-code:vocal mute`, "Claude Mute this session" or its shortcut takes one out; the last one out turns voice mode off. With voice mode on for all, it mutes just that session. `/handfree-code:vocal on` or `off` goes back to all sessions. The shortcuts have no keys by default: choose them in Settings > Voice commands.
 
 ## Updating
 
@@ -362,7 +365,7 @@ The app keeps its own choices out of this file: the engine, the model and the au
 
 Checked with Claude Code 2.1.287 and macOS 14.4.1, October 2026.
 
-- **Cloud sessions**: their permission prompts are not asked by voice, the bridge does not carry them. "Claude Reply" cannot open a cloud session. They are announced as "cloud" and the project's name: a cloud session's title lives on claude.ai only, neither in its transcript nor in the app's files on the Mac.
+- **Cloud sessions**: their permission prompts are not asked by voice, the bridge does not carry them. "Claude Reply" cannot open a cloud session. Voice mode cannot be turned on for a cloud session alone (`/handfree-code:vocal here` runs in the cloud, and the session on screen is known only for the Mac's own). They are announced as "cloud" and the project's name: a cloud session's title lives on claude.ai only, neither in its transcript nor in the app's files on the Mac.
 - **A session started by another one** is not read: the session that started it relays its result.
 - **One Mac**: the bridge speaks and listens on a single Mac.
 - **The app is built on each Mac** (no download of a prebuilt app): it needs Apple's developer tools, and Swift 5.10 or later. WhisperKit is pinned to 0.9.4, the last version Xcode 15's Swift builds.
