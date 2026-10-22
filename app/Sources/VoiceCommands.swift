@@ -36,6 +36,8 @@ enum VoiceCommands {
     VoiceCommand(id: "restart", title: String(localized: "command.restart", defaultValue: "Restart"), about: String(localized: "Read the reply again from the start")),
     VoiceCommand(id: "voice_on", title: String(localized: "command.voice_on", defaultValue: "Voice mode on"), about: String(localized: "Turn voice mode on")),
     VoiceCommand(id: "voice_off", title: String(localized: "command.voice_off", defaultValue: "Voice mode off"), about: String(localized: "Turn everything off, listening included")),
+    VoiceCommand(id: "session_on", title: String(localized: "command.session_on", defaultValue: "Voice this session"), about: String(localized: "Voice mode for the session on screen only")),
+    VoiceCommand(id: "session_off", title: String(localized: "command.session_off", defaultValue: "Mute this session"), about: String(localized: "No voice for the session on screen")),
   ]
 
   // The names the Voice Control setup used in `voice_commands`, still read by the listener.

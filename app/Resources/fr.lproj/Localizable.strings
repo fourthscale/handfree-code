@@ -148,6 +148,10 @@
 "Read the reply again from the start" = "Relire la réponse depuis le début";
 "Turn voice mode on" = "Activer le mode vocal";
 "Turn everything off, listening included" = "Tout couper, écoute comprise";
+"command.session_on" = "Mode vocal pour cette session";
+"command.session_off" = "Couper cette session";
+"Voice mode for the session on screen only" = "Le mode vocal pour la session à l'écran seulement";
+"No voice for the session on screen" = "Plus de voix pour la session à l'écran";
 "Remove the shortcut" = "Supprimer le raccourci";
 "Its key while you dictate" = "Sa touche pendant une dictée";
 "Spoken phrases and keyboard shortcuts" = "Phrases dites et raccourcis clavier";

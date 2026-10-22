@@ -10,7 +10,7 @@ const ROOT = ObjC.unwrap($.NSProcessInfo.processInfo.arguments)
 const SOURCE = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(`${ROOT}/bin/handfree.js`, $.NSUTF8StringEncoding, null))
 if (!SOURCE) throw new Error(`cannot read ${ROOT}/bin/handfree.js`)
 // What is checked below, handed back by handfree.js once evaluated: its own `run` is never called, so it runs no command.
-const NAMES = ['speakableLines', 'linesThroughFirstParagraph', 'endsOnWrittenQuestion', 'answerOf', 'decide', 'dictatedText',
+const NAMES = ['speakableLines', 'linesThroughFirstParagraph', 'writtenQuestion', 'answerOf', 'decide', 'dictatedText',
   'compareVersions', 'splitQuestions', 'uniqueParagraphs', 'paragraphsNotIn', 'planQuestionReading', 'afterSaying',
   'linesBeforePause', 'textOfLastMessage', 'emptyState', 'hold', 'isHeld', 'heldByAnother', 'releaseHoldOf', 'nextLineToSay',
   'now', 'CONFIG', 'PHRASE']
@@ -21,7 +21,7 @@ function loadPlugin() {
 
 function run() {
   const plugin = loadPlugin()
-  const { speakableLines, linesThroughFirstParagraph, endsOnWrittenQuestion, answerOf, decide, dictatedText, compareVersions,
+  const { speakableLines, linesThroughFirstParagraph, writtenQuestion, answerOf, decide, dictatedText, compareVersions,
     splitQuestions, uniqueParagraphs, paragraphsNotIn, planQuestionReading, afterSaying, linesBeforePause, textOfLastMessage,
     emptyState, hold, isHeld, heldByAnother, releaseHoldOf, nextLineToSay, now, CONFIG, PHRASE } = plugin
 
@@ -40,8 +40,15 @@ function run() {
   check('a list item loses its bullet', speakableLines('- one\n2. two'), ['one.', 'two.'])
   check('the first paragraph counts its lines', linesThroughFirstParagraph('A.\nB.\n\nC.'), 2)
   check('a heading first does not end the first paragraph', linesThroughFirstParagraph('# Title\n\nA.\n\nB.'), 2)
-  check('a reply ending on a question', endsOnWrittenQuestion('Done.\n\nShall I go on?'), true)
-  check('a question mark earlier does not count', endsOnWrittenQuestion('Why? Because.\n\nDone.'), false)
+  check('a reply ending on a question', writtenQuestion('Done.\n\nShall I go on?'), { question: 'Shall I go on?', text: 'Done.' })
+  check('a question mark inside a line does not count', writtenQuestion('Why? Because.\n\nDone.'), null)
+  check('a question followed by its options and a recommendation is found, the rest read around it',
+    writtenQuestion('Facts.\n\n---\n\n❓ **Q1 — Keep the dependency?**\n\n- (a) keep\n- (b) drop\n\n➡️ I recommend (b).'),
+    { question: '❓ **Q1 — Keep the dependency?**', text: 'Facts.\n\n---\n\n- (a) keep\n- (b) drop\n\n➡️ I recommend (b).' })
+  check('a question above a later section is not the one asked', writtenQuestion('Shall I go on?\n\n## Details\n\nDone.'), null)
+  check('a title in bold ending on "?" is not a question', writtenQuestion('**Why did it fail?**\n\nThe hook missed it.'), null)
+  check('a bold question as the last paragraph is one', writtenQuestion('Done.\n\n**Shall I go on?**').question, '**Shall I go on?**')
+  check('a question inside a code block is not one', writtenQuestion('Run:\n\n```\nok?\n```\n\nDone.'), null)
 
   // ---------- answers
 
