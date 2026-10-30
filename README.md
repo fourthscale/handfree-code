@@ -64,9 +64,9 @@ The first build takes a few minutes. At its first start, the app downloads the W
 
 ### 3. The permissions
 
-- System Settings > Privacy & Security > **Accessibility**: allow **Handfree Code** (the app asks). It pastes your dictation into Claude when Claude's field cannot be reached otherwise, presses Return for "Stop" and Escape for "Cancel", and sees the double taps of a modifier key chosen as a shortcut.
+- System Settings > Privacy & Security > **Accessibility**: allow **Handfree Code** (the app asks). It fills and sends Claude's message field for your dictations (the spoken commands are run by the app, so they use its permission), presses Return for "Stop" and Escape for "Cancel", and sees the double taps of a modifier key chosen as a shortcut.
 - **Speech Recognition**, only if you choose Apple's engine (Settings > Dictation): macOS asks Handfree Code the first time.
-- The **microphone**: macOS asks Handfree Code once. The app records for the listener too, so Python needs no permission; the microphone is the system's, or the one chosen in Settings > Dictation. Only without the app does Python record and press the keys itself: then allow Python in Microphone and Accessibility, and restart the listener: `launchctl kickstart -k "gui/$(id -u)/com.handfree-code.listener"`.
+- The **microphone**: macOS asks Handfree Code once. The app records for the listener too, so Python needs no permission; the microphone is the system's, or the one chosen in Settings > Dictation. Only without the app does Python record, press the keys and run the commands itself: then allow Python in Microphone and Accessibility, and restart the listener: `launchctl kickstart -k "gui/$(id -u)/com.handfree-code.listener"`.
 
 Tip: with people talking nearby, a headset microphone close to your mouth keeps their voices out far better than the Mac's own.
 
@@ -353,7 +353,7 @@ The app keeps its own choices out of this file: the engine, the model and the au
 
 - **Nothing is read**: check voice mode (`/handfree-code:vocal on`), then `say hello`. A hook added mid-session only applies to new sessions.
 - **A spoken command does nothing**: set `"listener_log": true`, restart the listener, say it again and read `~/Library/Logs/handfree-listener.log`. Each phrase heard is there with what was done with it: not heard at all (microphone), heard among other words (say it alone), heard as other words by the free transcription (each command taken also shows what it heard), or ignored in the current state (only "Stop" while you dictate).
-- **"osascript is not allowed to send keystrokes"** in that log: the app did not press the key (not running, or missing from Accessibility), so Python tried and is not allowed either. Allow Handfree Code in Accessibility (see *The permissions*); if it is there and was rebuilt, remove it ("−") and add it back.
+- **"osascript is not allowed to send keystrokes"** or **"not allowed assistive access"** in that log or in `~/Library/Caches/handfree-code/dictate-behind.log`: the app did not press the key (not running, or missing from Accessibility), or did not run the command, so Python tried and is not allowed either. Allow Handfree Code in Accessibility (see *The permissions*); if it is there and was rebuilt, remove it ("−") and add it back.
 - **The dictation does not open, or Claude's questions stay written**: the app's Settings and services > Services shows whether the dictation is ready and the MCP server declared (a button declares it again; then open a new session). `curl -s -X POST localhost:51290 -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'` answers when the app runs.
 - **The transcription is poor**: Settings > Dictation: the full Large v3 Turbo model is the most accurate. The last dictation's sound is in `~/Library/Caches/handfree-code/last-dictation.wav`, to compare.
 - **The app asks for its permissions again after an update**: it was signed ad hoc, the local certificate missing (the install says so). Run `sh app/install.sh` again: it creates the certificate.

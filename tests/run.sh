@@ -759,6 +759,16 @@ PY
 HANDFREE_APP_PORT=$APP_PORT /usr/bin/python3 "$LISTENER" --press escape; wait
 check "listener: the app is asked to press the key" "$(cat "$WORK/pressed.json" 2>/dev/null)" '"method": "keys/press", "params": {"key": "escape"}'
 
+# A command heard: the app runs it, with its Accessibility, so that Python needs none; without the app, Python runs it.
+printf 'ObjC.import("Foundation"); function run(argv) { $(argv[0]).writeToFileAtomicallyEncodingError("%s", true, 4, null) }\n' "$WORK/ran.txt" > "$WORK/fake-script.js"
+/usr/bin/python3 "$WORK/fake-app.py" "$APP_PORT" "$WORK/run.json" & sleep 0.5
+HANDFREE_APP_PORT=$APP_PORT HANDFREE_SCRIPT="$WORK/fake-script.js" /usr/bin/python3 "$LISTENER" --run quiet; wait; sleep 1
+check "listener: the app is asked to run a command heard" "$(cat "$WORK/run.json" 2>/dev/null)" '"method": "commands/run", "params": {"argument": "--quiet"}'
+check "listener: with the app's secret" "$(cat "$WORK/run.json" 2>/dev/null)" "X-Handfree-Secret: test-secret"
+check_not "listener: and does not run it itself" "$(cat "$WORK/ran.txt" 2>/dev/null)" "quiet"
+HANDFREE_APP_PORT=$DEAD_PORT HANDFREE_SCRIPT="$WORK/fake-script.js" /usr/bin/python3 "$LISTENER" --run quiet; sleep 2
+check "listener: without the app, it runs the command itself" "$(cat "$WORK/ran.txt" 2>/dev/null)" "^--quiet$"
+
 # Claude's field out of reach, the app records and types the text in: it asks for its local secret, sent from its file.
 /usr/bin/python3 "$WORK/fake-app.py" "$APP_PORT" "$WORK/inserted.txt" & FAKE_APP=$!; sleep 0.5
 (HANDFREE_OPEN_LOG="$WORK/links.log" HANDFREE_FRONT_APP=Claude HANDFREE_PROMPT_REACHABLE=0 HANDFREE_DICTATION_URL="http://127.0.0.1:$APP_PORT" hf --listen >/dev/null)

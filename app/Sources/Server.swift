@@ -48,7 +48,7 @@ final class DictationServer: ObservableObject {
 
 // One HTTP request, JSON-RPC inside (MCP for the tools, and the plugin's own `dictation/insert`).
 // Only local programs reach it, but a web page may send it a request too: one with an Origin header, or a Host other
-// than this address, is refused; `keys/press` and `dictation/insert` need the app's secret as well.
+// than this address, is refused; `keys/press`, `dictation/insert` and `commands/run` need the app's secret as well.
 @MainActor
 final class Exchange {
   private let connection: NWConnection
@@ -109,7 +109,7 @@ final class Exchange {
       }
       guard let id = message["id"] else { return self.respond(status: "202 Accepted", json: nil) } // a notification
       let method = message["method"] as? String ?? ""
-      if ["keys/press", "dictation/insert"].contains(method), !self.secretGiven { return self.respond(status: "403 Forbidden", json: nil) }
+      if ["keys/press", "dictation/insert", "commands/run"].contains(method), !self.secretGiven { return self.respond(status: "403 Forbidden", json: nil) }
       let params = message["params"] as? [String: Any] ?? [:]
       var reply: [String: Any] = ["jsonrpc": "2.0", "id": id]
       switch method {
@@ -137,6 +137,15 @@ final class Exchange {
         guard AXIsProcessTrusted() else { reply["error"] = ["code": -32001, "message": "No Accessibility permission"]; break }
         pressKey(params["key"] as? String == "escape" ? 53 : 36)
         reply["result"] = ["pressed": true]
+      case "commands/run":
+        // A spoken command, run by the app as its shortcuts are: the plugin's script then acts on Claude's window with
+        // this app's Accessibility, and Python needs none. Only the commands' own arguments, never another program.
+        guard let argument = params["argument"] as? String, Set(VoiceCommands.arguments.values).contains(argument) else {
+          reply["error"] = ["code": -32602, "message": "Not a command"]
+          break
+        }
+        tellPlugin(argument)
+        reply["result"] = ["started": true]
       default:
         reply["error"] = ["code": -32000, "message": "Unknown method: \(method)"]
       }

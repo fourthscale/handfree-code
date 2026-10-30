@@ -197,20 +197,22 @@ def press(key):
     The Handfree Code app presses it, with its own Accessibility permission. Without the app, System Events does,
     which needs Python's.
     """
+    if ask_app("keys/press", {"key": "escape" if key == ESCAPE_KEY else "return"}) or NO_KEYS:
+        return
+    subprocess.run(["osascript", "-e", 'tell application "System Events" to key code %d' % key], check=False)
+
+
+def ask_app(method, params):
+    """True when the Handfree Code app did it."""
     import urllib.request
-    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "keys/press",
-                       "params": {"key": "escape" if key == ESCAPE_KEY else "return"}}).encode()
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     try:
         headers = {"Content-Type": "application/json", "X-Handfree-Secret": app_secret()}
         request = urllib.request.Request(f"http://127.0.0.1:{APP_PORT}/", body, headers)
         with urllib.request.urlopen(request, timeout=2) as answer:
-            if "result" in json.loads(answer.read() or b"{}"):
-                return
+            return "result" in json.loads(answer.read() or b"{}")
     except (OSError, ValueError):
-        pass
-    if NO_KEYS:
-        return
-    subprocess.run(["osascript", "-e", 'tell application "System Events" to key code %d' % key], check=False)
+        return False
 
 
 def chime(config):
@@ -224,6 +226,10 @@ def chime(config):
 def run(command):
     if command in ("stop", "cancel"):
         press(RETURN_KEY if command == "stop" else ESCAPE_KEY)
+    # The app runs it, as it runs its shortcuts: the script then reaches Claude's window with the app's Accessibility,
+    # and Python needs none. Without the app (or an older one), Python runs it and needs Accessibility itself.
+    if ask_app("commands/run", {"argument": COMMANDS[command]}):
+        return
     subprocess.Popen(["osascript", "-l", "JavaScript", SCRIPT, COMMANDS[command]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -420,6 +426,10 @@ def main():
     if len(sys.argv) > 2 and sys.argv[1] == "--press":
         # For tests: press Return or Escape as "Stop" and "Cancel" do.
         press(ESCAPE_KEY if sys.argv[2] == "escape" else RETURN_KEY)
+        return
+    if len(sys.argv) > 2 and sys.argv[1] == "--run":
+        # For tests: run a command as when it is heard.
+        run(sys.argv[2])
         return
     if len(sys.argv) > 2 and sys.argv[1] == "--check":
         config = read_json(CONFIG_PATH)
